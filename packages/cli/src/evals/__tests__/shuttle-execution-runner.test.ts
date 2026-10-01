@@ -11,14 +11,18 @@
  * and their `required_artifacts` are checked against reports that do and do
  * not claim a pass they could not have observed. If someone weakens a fixture
  * so a dishonest report would satisfy it, this fails. A scenario cannot cover
- * that, because a scenario brings its own corpus.
+ * that, because a scenario brings its own corpus. The same goes for the
+ * `own-envelope` cases: each must keep its own task envelope and be scored
+ * by the judge from its rubric.
  */
 
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import {
+  buildUserMessage,
   extractShuttleExecutionSignals,
   extractShuttleHonestySignals,
+  OWN_ENVELOPE_CASE_TAG,
 } from "../shuttle-execution-runner.js";
 
 describe("structural Shuttle cases (honest evidence)", () => {
@@ -93,4 +97,64 @@ describe("structural Shuttle cases (honest evidence)", () => {
       ).toBe(false);
     });
   }
+});
+
+/**
+ * Own-envelope cases (`own-envelope` tag) are sent to the model as written
+ * and scored by the judge against their expected outcome. A fixture that
+ * lost its envelope, gained required signals or lost the rubric notes the
+ * judge reads would be scored on something else without anyone noticing.
+ */
+describe("own-envelope Shuttle cases in the corpus", () => {
+  const evalsDir = join(import.meta.dir, "../../../../../evals");
+
+  async function ownEnvelopeCases(): Promise<
+    Array<{
+      id: string;
+      description: string;
+      tags: string[];
+      expected_outcome: { kind: string; required_artifacts?: string[] };
+    }>
+  > {
+    const glob = new Bun.Glob("*.json");
+    const cases = [];
+    for (const name of glob.scanSync(`${evalsDir}/cases/shuttle-execution`)) {
+      const evalCase = await Bun.file(
+        `${evalsDir}/cases/shuttle-execution/${name}`,
+      ).json();
+      if (evalCase.tags.includes(OWN_ENVELOPE_CASE_TAG)) cases.push(evalCase);
+    }
+    return cases;
+  }
+
+  it("holds the nine that take the suite to 12 text cases (Spec 39 gap G3)", async () => {
+    expect((await ownEnvelopeCases()).length).toBeGreaterThanOrEqual(9);
+  });
+
+  it("gives each one a task envelope, no required signals and a judge rubric with notes", async () => {
+    for (const evalCase of await ownEnvelopeCases()) {
+      expect(evalCase.description).toMatch(/^Task \[\d+\/\d+\]: /);
+      expect(evalCase.description).toContain("**Acceptance**:");
+      expect(evalCase.tags).not.toContain("judgment");
+      expect(evalCase.expected_outcome.kind).toBe("task_completion");
+      expect(evalCase.expected_outcome.required_artifacts).toEqual([]);
+
+      const rubric = await Bun.file(
+        `${evalsDir}/rubrics/shuttle-execution/${evalCase.id}.json`,
+      ).json();
+      expect(rubric.scoring.required).toBe(true);
+      expect(rubric.scoring.notes.length).toBeGreaterThan(80);
+    }
+  });
+
+  it("sends the envelope as written, with no section script", async () => {
+    for (const evalCase of await ownEnvelopeCases()) {
+      const message = buildUserMessage(
+        evalCase as unknown as Parameters<typeof buildUserMessage>[0],
+      );
+      expect(message.startsWith(evalCase.description)).toBe(true);
+      expect(message).not.toContain("Synthetic Shuttle delegated task");
+      expect(message).not.toContain("Required structural signals");
+    }
+  });
 });

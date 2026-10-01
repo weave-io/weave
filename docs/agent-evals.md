@@ -822,7 +822,7 @@ Weave currently supports an **eight-suite text-only eval surface**. Every regist
 | `loom-routing` | `LoomRoutingRunner` | Loom emits text-observable routing signals for the primary route, with evidence/review follow-ups treated separately from the primary implementation agent |
 | `tapestry-execution` | `TapestryExecutionRunner` | Tapestry emits text-observable completion and delegation-chain signals for plan execution |
 | `tapestry-category-routing` | `TapestryCategoryRoutingRunner` | Tapestry emits text-observable category routing signals when delegating to category shuttles |
-| `shuttle-execution` | `ShuttleExecutionRunner` | Shuttle emits bounded delegated-task completion reports with task intake reflection, file awareness, acceptance confirmation, and final evidence reporting from assistant text |
+| `shuttle-execution` | `ShuttleExecutionRunner` | Shuttle emits bounded delegated-task completion reports with task intake reflection, file awareness, acceptance confirmation, and final evidence reporting from assistant text; its `own-envelope` cases test what it does with a described session: honest reporting of failures, stale checks and a symptom that remains, scope, no invented values or commands, refusing secrets, and following the task's learnings |
 | `spindle-tools` | `SpindleToolsRunner` | Spindle emits source-cited research structure with explicit `Source facts`, `Interpretation`, `Sources`, and bounded confidence from assistant text |
 | `pattern-planning` | `PatternPlanningRunner` | Pattern emits structurally explicit plans with observable scope, file-task, sequencing, and acceptance signals |
 | `weft-review` | `WeftReviewRunner` | Weft emits structurally explicit review verdicts, blocker counts, and actionable file-cited approval or rejection signals |
@@ -1659,6 +1659,10 @@ One trajectory case for each runtime problem in the [September 2026 session audi
 #### Text-only judgment cases
 
 Text-only cases tagged `judgment` test the conclusion an agent reaches from evidence in the case (inline code, a specialist's report, the project's commands), not only its output format. Runners withhold the required signal names for these cases, and each comes paired with a counter-case so a prompt change cannot pass by shifting bias. See the "Judgment cases" section of [`evals/README.md`](../evals/README.md).
+
+#### Shuttle own-envelope cases
+
+`shuttle-execution` cases tagged `own-envelope` (Spec 39 task 0.3, eval-readiness gap G3, issue #275) carry the whole delegated task and the session so far (edits, commands and observed output) in their description. The runner sends it as written, with no section script and no signal names, and the judge scores the report against the case's expected outcome and rubric notes. They are judged rather than deterministic because the runner's honesty signals assume nothing ran: a report that quotes `14 pass, 1 fail` from the session is honest there. Nine were added on 1 Oct 2026, taking the suite from 3 to 12 text cases. Some come in act / don't-act pairs like judgment cases: `reports-preexisting-failure` (leave a failure the change did not cause) against `owns-failure-it-caused`. See "Own-envelope cases" in [`evals/README.md`](../evals/README.md#own-envelope-cases-own-envelope-tag).
 
 ### Text-only contract, no longer an explicit non-goal for the whole eval surface
 
