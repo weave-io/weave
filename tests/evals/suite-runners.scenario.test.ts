@@ -3318,6 +3318,29 @@ const TAPESTRY_ANSWERS: SignalRow[] = [
     true,
   ],
   [
+    "a re-delegation that says when it will mark the task done",
+    [
+      "Do not mark task 1/1 `[x]`: `docs/cli.md` is unchanged.",
+      "Task [1/1]: Document the --json flag\n@shuttle",
+      "Once shuttle returns, I will check `docs/cli.md` before marking `[x]`.",
+      "The task stays open until it is marked done.",
+    ].join("\n"),
+    ["tapestry_task_not_completed", "tapestry_task_redelegated"],
+    true,
+  ],
+  [
+    "a plain `Task 1/1:` envelope addressed to an agent",
+    "Task 1/1: Document the --json flag\n**Files**: `docs/cli.md`\n\n@shuttle",
+    ["tapestry_task_redelegated"],
+    true,
+  ],
+  [
+    "a bare agent handle with no task envelope",
+    "No re-delegation needed.\n@shuttle",
+    ["tapestry_task_redelegated"],
+    false,
+  ],
+  [
     "a completion when the case wanted a re-delegation",
     [
       "Evidence matches the claim: 2 pass, 0 fail.",
@@ -3356,6 +3379,74 @@ describe("Tapestry decides whether a shuttle's report finishes the task", () => 
     );
     expect(asked).not.toContain("Required structural signals");
     expect(asked).not.toContain("tapestry_task_completed");
+  });
+});
+
+describe("Tapestry carries on with a plan whose last step the case describes", () => {
+  const probe = only("tapestry-execution")[0]?.[1] as SuiteProbe;
+  const fixture: FixtureSpec = {
+    ...probe.fixture,
+    id: "tapestry-retries-a-connection-reset",
+    description: [
+      "Active plan: `.weave/plans/payout-audit.md`",
+      "- [ ] 2. Trace where the retry counter is reset (Agent: thread)",
+      "The delegation to thread returned: ECONNRESET (socket hang up).",
+    ].join("\n"),
+    expectedOutcome: {
+      kind: "task_completion",
+      description: "Send task 2 to thread once more.",
+      required_artifacts: [],
+    },
+    tags: ["execution", "own-envelope"],
+  };
+  const answer = "Task [2/3]: Trace where the retry counter is reset\n@thread";
+
+  async function runWith(judgePasses: boolean) {
+    return withEvalFixtures([fixture], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "tapestry-execution",
+        answers: [answer],
+        rawArtifacts: true,
+        judgeOutput: {
+          score: judgePasses ? 0.97 : 0.2,
+          rationale: "judge rationale",
+        },
+      }),
+    );
+  }
+
+  it("hands the model the case's plan and last step, with no completion cue or decision prompt", async () => {
+    const run = await runWith(true);
+    const asked = run.rawArtifacts[0]?.transcript[0]?.content ?? "";
+
+    expect(asked).toContain("Active plan: `.weave/plans/payout-audit.md`");
+    expect(asked).toContain("ECONNRESET (socket hang up)");
+    expect(asked).toContain("Continue executing the plan from this point.");
+    expect(asked).not.toContain("Synthetic eval plan context");
+    expect(asked).not.toContain('Signal completion with "task complete"');
+    expect(asked).not.toContain("either mark it `[x]` complete");
+    expect(asked).not.toContain("Send task 2 to thread once more.");
+  });
+
+  it("asks the judge whether the response reaches the case's expected outcome", async () => {
+    const run = await runWith(true);
+    const call = run.judgeCalls.find(
+      (c) => c.dimension === "executionCompleteness",
+    );
+
+    expect(call?.response).toBe(answer);
+    expect(call?.criteria.map((c) => c.question)).toEqual([
+      "Does the response achieve the expected outcome: Send task 2 to thread once more.?",
+    ]);
+  });
+
+  it("lets the judge's verdict decide the result", async () => {
+    const passed = await runWith(true);
+    const failed = await runWith(false);
+
+    expect(passed.firstCase?.passed).toBe(true);
+    expect(failed.firstCase?.passed).toBe(false);
   });
 });
 

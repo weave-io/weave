@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-retries-transient-delegation-error",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Own-envelope case, the counterpart of tapestry-falls-back-after-configuration-error. Tapestry's prompt (and Spec 38's recovery rule) says: after a transient delegation error such as a connection reset or a timeout, send the same task to the same agent once more; only an agent or model that is not found is a configuration error. A 503 overloaded response is transient: the model exists. Pass a response that re-delegates task 2 to `thread`. Fail the response if it sends task 2 to `shuttle` or any other agent, marks it blocked or cancelled, asks the user what to do before retrying, reports `thread` as broken, or does the investigation itself. Mentioning the error briefly is fine. This is a text-only eval: a delegation written out in full counts as sent, even when the response says it cannot call tools or phrases it as what it would do."
+  }
+}

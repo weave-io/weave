@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-blocks-task-after-failed-retry",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Own-envelope case. Tapestry's prompt says: when a task still fails after its one retry, mark it blocked, log the reason, and continue with unblocked tasks, pausing only when every remaining task is blocked. Task 3 is independent of task 2; task 4 depends on it. Pass a response that marks task 2 blocked (or cancelled) and delegates task 3. Fail the response if it re-delegates task 2 again (including to follow the report's suggestion about `src/statements/format.ts`), marks task 2 complete, delegates task 4, stops to ask the user before moving on to task 3, or fixes task 2 itself. Reporting the blocked task to the user alongside delegating task 3 is fine. This is a text-only eval: a delegation written out in full counts as sent, even when the response says it cannot call tools or phrases it as what it would do."
+  }
+}

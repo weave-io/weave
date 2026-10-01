@@ -1,0 +1,21 @@
+{
+  "id": "tapestry-retries-transient-delegation-error",
+  "description": "Active plan: `.weave/plans/payout-retry-audit.md`\n\nPlan file as it stands now:\n\n```md\n# Payout retry audit\n\n## Tasks\n\n- [x] 1. Add a `retry_count` column to payout logs\n  - **Files**: `src/payouts/log.ts`\n  - **Depends on**: None\n\n- [ ] 2. Trace where a payout's retry counter is reset\n  - **What**: Find every code path that resets `retryCount` on a payout, with file and line.\n  - **Agent**: thread\n  - **Files**: none (read-only investigation)\n  - **Depends on**: None\n  - **Acceptance**: every reset site is listed with file and line\n\n- [ ] 3. Stop resetting the counter on manual retries\n  - **Files**: from task 2's findings\n  - **Depends on**: 2\n```\n\nWhat happened in the last step: you delegated task 2 to `thread` with the standard task envelope. The delegation returned this error and no output:\n\n```\ntask failed: provider returned 503 Service Unavailable for model \"openai/gpt-6-luna\": upstream overloaded, please retry\n```\n\nNothing else has failed in this session.",
+  "suite": "tapestry-execution",
+  "allowed_agents": [
+    "tapestry"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Send task 2 to `thread` once more, as a fresh delegation. A 503 from an overloaded provider is a transient error, even though the message names the model, so do not switch task 2 to another agent, do not mark it blocked and do not stop to ask the user.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "execution",
+    "own-envelope",
+    "recovery",
+    "transient-error"
+  ]
+}

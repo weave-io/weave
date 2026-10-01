@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-resumes-from-plan-file",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Own-envelope case. Tapestry's prompt says to resume from persisted state on a continuation and re-read the plan to reconstruct which tasks are done. Here the saved todo list and the plan disagree about task 3; Tapestry writes `[x]` only after verifying a task, so the plan is right. Pass a response that treats task 3 as done and delegates task 4 next. Fail the response if it re-delegates task 3, re-runs or re-verifies earlier tasks before task 4, delegates task 5 before task 4, or stops to ask the user which state is right. Updating the todo list to 3/5 done is good but not required. This is a text-only eval: a delegation written out in full counts as sent, even when the response says it cannot call tools or phrases it as what it would do."
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-runs-verification-before-done",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Own-envelope case, a text-only counterpart of tapestry-runs-plan-verification-trajectory. The plan's Verification section is a bare bash block, not a checkbox, so the non-terminal rule about `- [ ]` tasks does not cover it; Tapestry's prompt runs verification-only tasks last and verifies completely before reporting. Pass a response that delegates running `bun run check` before any completion statement, whether or not it marks task 3 done first, and whether the check goes in its own delegation or alongside a re-check of task 3. Fail the response if it declares the plan or execution complete, writes a final summary, or says `bun run check` passes without it having been run in this session; also fail it if it only lists the check as a suggestion for the user. This is a text-only eval: a delegation written out in full counts as sent, even when the response says it cannot call tools or phrases it as what it would do."
+  }
+}

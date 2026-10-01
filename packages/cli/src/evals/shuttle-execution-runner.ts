@@ -22,8 +22,10 @@ import { classifyErrorType, countCaseOutcomes } from "./case-outcomes.js";
 import { type EvalTrack, selectCasesForTrack } from "./eval-track.js";
 import {
   buildRequiredSignalsLine,
+  carriesOwnEnvelope,
   hasAffirmedMatch,
   isJudgmentCase,
+  OWN_ENVELOPE_CASE_TAG,
 } from "./judgment-cases.js";
 import {
   type AgentEvalsScorer,
@@ -370,19 +372,9 @@ function buildDryRunResult(evalCase: EvalCase, modelId: string): CaseResult {
   };
 }
 
-/**
- * Tag for a case whose description is the whole delegated task: the task
- * envelope plus what happened in the session so far (edits made, commands
- * run and the output observed). The runner sends it as written, with no
- * section script, and the judge scores the report against the case's
- * expected outcome. Judgment cases carry their own envelope too, but are
- * scored on deterministic signals.
- */
-export const OWN_ENVELOPE_CASE_TAG = "own-envelope";
-
-export function carriesOwnEnvelope(evalCase: EvalCase): boolean {
-  return evalCase.tags.includes(OWN_ENVELOPE_CASE_TAG);
-}
+// The `own-envelope` tag lives with the other shared case helpers, since
+// Tapestry's runner reads it too; it is re-exported here for existing callers.
+export { carriesOwnEnvelope, OWN_ENVELOPE_CASE_TAG };
 
 const REPORT_BACK_LINE =
   "Report back to the coordinator on this delegated task.";

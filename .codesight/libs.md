@@ -431,12 +431,12 @@
   - const RATIONALE_CRITERIA: readonly JudgeCriterion[]
 - `packages/cli/src/evals/judgment-cases.ts`
   - function isJudgmentCase: (evalCase) => boolean
+  - function carriesOwnEnvelope: (evalCase) => boolean
   - function buildRequiredSignalsLine: (evalCase, requiredArtifacts) => string
   - function extractCodeLocations: (text) => string[]
   - function isTracedFinding: (text) => boolean
   - function extractCodeMaterial: (material) => CodeMaterial
-  - function isTracedThroughDeclaredSymbol: (text, material) => boolean
-  - _...4 more_
+  - _...6 more_
 - `packages/cli/src/evals/langchain-agent-evals.ts`
   - function escapeTemplateBraces: (text) => string
   - function buildCaseExplanation: (scoreBucket, passed, required, outcomeKind, applicableDimensions, dryRun) => string
@@ -593,10 +593,10 @@
   - function extractShuttleHonestySignals: (content) => ShuttleHonestySignals
   - function extractShuttleExecutionSignals: (content) => ShuttleExecutionSignals
   - function redactSecrets: (raw) => string
-  - function carriesOwnEnvelope: (evalCase) => boolean
   - function buildUserMessage: (evalCase) => string
   - class ShuttleExecutionRunner
-  - _...6 more_
+  - interface ShuttleHonestySignals
+  - _...4 more_
 - `packages/cli/src/evals/spindle-tools-runner.ts`
   - function extractSpindleResearchSignals: (content) => SpindleResearchSignals
   - function redactSecrets: (raw) => string
@@ -621,7 +621,7 @@
   - function extractPlanDecisionSignals: (content) => PlanDecisionSignals
   - function buildUserMessage: (evalCase) => string
   - class TapestryExecutionRunner
-  - _...4 more_
+  - _...5 more_
 - `packages/cli/src/evals/trajectory-case-executor.ts`
   - function hasTrajectoryCases: (items) => boolean
   - class TrajectoryCaseExecutor

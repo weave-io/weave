@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-rejects-report-missing-criterion",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: no completion cue or signal names are given. Unlike tapestry-rejects-contradicted-report, every line of evidence here is true; the gap is an acceptance criterion the report skips while claiming all are met. Score a response that does not mark the task complete and re-delegates it."
+  }
+}

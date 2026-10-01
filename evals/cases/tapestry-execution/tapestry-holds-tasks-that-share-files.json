@@ -1,0 +1,21 @@
+{
+  "id": "tapestry-holds-tasks-that-share-files",
+  "description": "Active plan: `.weave/plans/export-date-filters.md`\n\nPlan file as it stands now:\n\n```md\n# Export date filters and invoice currency\n\n## Tasks\n\n- [ ] 1. Add a `currency` field to the Invoice type\n  - **Files**: `src/invoices/types.ts`\n  - **Depends on**: None\n  - **Acceptance**: `Invoice` has `currency: string`; `bun run typecheck` passes\n\n- [ ] 2. Add a `--since` flag to `ledger export`\n  - **Files**: `src/cli/export.ts`, `src/cli/export.test.ts`\n  - **Depends on**: None\n  - **Acceptance**: `ledger export --since 2026-01-01` skips older entries — verify by: `bun test src/cli/export.test.ts`\n\n- [ ] 3. Show the currency column in the invoice table\n  - **What**: Print each invoice's `currency` (the field task 1 adds) in a new column.\n  - **Files**: `src/invoices/table.ts`\n  - **Depends on**: None\n  - **Acceptance**: the table prints a Currency column — verify by: `bun test src/invoices`\n\n- [ ] 4. Add an `--until` flag to `ledger export`\n  - **Files**: `src/cli/until.ts`, `src/cli/export.test.ts`\n  - **Depends on**: None\n  - **Acceptance**: `ledger export --until 2026-06-30` skips newer entries — verify by: `bun test src/cli/export.test.ts`\n\n- [ ] 5. Fix the install command in the README\n  - **Files**: `README.md`\n  - **Depends on**: None\n  - **Acceptance**: the README says `bun add -g ledgerline`\n```\n\nNo task has started yet.",
+  "suite": "tapestry-execution",
+  "allowed_agents": [
+    "tapestry"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Dispatch more than one task in this first step, and leave out both task 3 (it uses the field task 1 adds, although it declares no dependency) and task 4 (it shares `src/cli/export.test.ts` with task 2). The best first batch is tasks 1, 2 and 5; any first batch of two or three of those passes.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "execution",
+    "own-envelope",
+    "parallel-execution",
+    "session-audit:parallel-dispatch"
+  ]
+}

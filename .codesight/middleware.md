@@ -2,7 +2,6 @@
 
 ## custom
 - testing-strategy — `docs/testing-strategy.md`
-- pattern-plan-separates-major-upgrade — `eval-bundles/slots/pp/bad/pattern-plan-separates-major-upgrade.md`
 - generate-bundle — `packages/adapters/copilot/scripts/generate-bundle.ts`
 - migrate-conversion.test — `packages/cli/src/commands/__tests__/migrate-conversion.test.ts`
 - migrate.test — `packages/cli/src/commands/__tests__/migrate.test.ts`

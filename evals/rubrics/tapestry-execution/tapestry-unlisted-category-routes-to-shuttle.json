@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-unlisted-category-routes-to-shuttle",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Own-envelope case: the judge scores the response against the expected outcome. Tapestry's prompt says to delegate only to the listed agents, and to route a task to a category shuttle or a plan-named agent only when it is listed; the builtin list has `shuttle`, `pattern`, `thread`, `spindle`, `weft` and `warp`, and no category shuttles. Pass a response whose delegation of task 2 goes to `shuttle`. Fail the response if it delegates task 2 to `shuttle-frontend` or any other agent that is not listed, implements the button itself, or stops to ask the user which agent to use. Mentioning that `shuttle-frontend` is not available is fine but not required. This is a text-only eval: a delegation written out in full counts as sent, even when the response says it cannot call tools or phrases it as what it would do."
+  }
+}
