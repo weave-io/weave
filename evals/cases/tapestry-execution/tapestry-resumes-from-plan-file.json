@@ -1,0 +1,21 @@
+{
+  "id": "tapestry-resumes-from-plan-file",
+  "description": "Continuation: this session resumed after its context was compacted.\n\nLast todo list saved before compaction:\n```\nTODO: 2/5 done\n• 2/5: Add idempotency keys ✓\n• 3/5: Retry on 429 ⟳ in_progress\n• 4/5: Log retry attempts\n• 5/5: Document retries\n```\n\nActive plan: `.weave/plans/client-retries.md`\n\nPlan file as it stands now:\n\n```md\n# Client retries\n\n## Tasks\n\n- [x] 1. Add a `withRetry` wrapper\n  - **Files**: `src/http/retry.ts`, `src/http/retry.test.ts`\n  - **Depends on**: None\n\n- [x] 2. Add idempotency keys to POST requests\n  - **Files**: `src/http/client.ts`\n  - **Depends on**: 1\n\n- [x] 3. Retry on HTTP 429 using `Retry-After`\n  - **Files**: `src/http/retry.ts`, `src/http/retry.test.ts`\n  - **Depends on**: 1\n\n- [ ] 4. Log each retry attempt\n  - **Files**: `src/http/log.ts`, `src/http/log.test.ts`\n  - **Depends on**: 3\n  - **Acceptance**: each retry logs `attempt`, `status` and `delayMs` — verify by: `bun test src/http/log.test.ts`\n\n- [ ] 5. Document the retry behaviour\n  - **Files**: `docs/http-client.md`\n  - **Depends on**: 4\n  - **Acceptance**: `docs/http-client.md` describes when and how often requests are retried\n```",
+  "suite": "tapestry-execution",
+  "allowed_agents": [
+    "tapestry"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Resume at task 4 and delegate it. The plan file, which marks task 3 `[x]`, is the source of truth (Tapestry marks a task `[x]` only after verifying it); the todo list saved before compaction is stale. Do not re-delegate task 3, restart from task 1, or delegate task 5 before task 4.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "execution",
+    "own-envelope",
+    "continuation",
+    "plan-state"
+  ]
+}

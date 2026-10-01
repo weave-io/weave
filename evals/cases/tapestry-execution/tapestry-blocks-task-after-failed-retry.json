@@ -1,0 +1,21 @@
+{
+  "id": "tapestry-blocks-task-after-failed-retry",
+  "description": "Active plan: `.weave/plans/statement-rounding.md`\n\nPlan file as it stands now:\n\n```md\n# Statement rounding\n\n## Tasks\n\n- [x] 1. Add a `roundHalfEven` helper\n  - **Files**: `src/money/round.ts`, `src/money/round.test.ts`\n  - **Depends on**: None\n\n- [ ] 2. Use banker's rounding in monthly statements\n  - **Files**: `src/statements/total.ts`, `src/statements/total.test.ts`\n  - **Depends on**: 1\n  - **Acceptance**: a statement of 0.125 + 0.125 totals 0.24 — verify by: `bun test src/statements`\n\n- [ ] 3. Add a `--locale` flag to `ledger report`\n  - **Files**: `src/cli/report.ts`, `src/cli/report.test.ts`\n  - **Depends on**: None\n  - **Acceptance**: `ledger report --locale de-DE` prints `1.234,50` — verify by: `bun test src/cli/report.test.ts`\n\n- [ ] 4. Show rounded totals on the statement PDF\n  - **Files**: `src/statements/pdf.ts`\n  - **Depends on**: 2\n```\n\nHistory of task 2:\n1. You delegated it to `shuttle`. The report showed `bun test src/statements` with 1 fail: `expected 0.24, received 0.25`.\n2. You re-delegated it once to `shuttle` with that failure and the full output. The second report, just returned:\n\n```\nFiles changed:\n- src/statements/total.ts: switched totals to roundHalfEven\n\nCommands run and their output:\n$ bun test src/statements\n✓ totals an empty statement\n✗ totals 0.125 + 0.125 as 0.24\n  expected 0.24, received 0.25\n 1 pass\n 1 fail\n\nIssues: roundHalfEven is applied to each line before summing; I could not find where the sum is rounded a second time. It may be in src/statements/format.ts, which I did not open. Another attempt could check there.\n```",
+  "suite": "tapestry-execution",
+  "allowed_agents": [
+    "tapestry"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Stop retrying task 2: mark it blocked with the failing test as the reason, and continue with task 3, which does not depend on it. Do not send task 2 to a specialist a third time.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "execution",
+    "own-envelope",
+    "recovery",
+    "blocked"
+  ]
+}

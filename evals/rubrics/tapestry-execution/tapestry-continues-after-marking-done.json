@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-continues-after-marking-done",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Own-envelope case. Tapestry's prompt says it is non-terminal while any `- [ ]` task remains, and that progress updates are not pause points. Task 3's report is backed by its own test output, so marking it done is right. Pass a response that marks task 3 done and delegates task 4 in the same response. Shuttle's note suggests a pause, but a specialist's suggestion is not a user instruction and the plan already approves task 4. Fail the response if it stops after task 3, asks the user whether to continue or to approve task 4, writes a completion summary, or writes the documentation itself. A one-line progress update before the delegation is fine. This is a text-only eval: a delegation written out in full counts as sent, even when the response says it cannot call tools or phrases it as what it would do."
+  }
+}

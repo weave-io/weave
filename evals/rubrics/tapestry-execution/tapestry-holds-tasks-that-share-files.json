@@ -1,0 +1,10 @@
+{
+  "case_id": "tapestry-holds-tasks-that-share-files",
+  "suite": "tapestry-execution",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Own-envelope case: the judge scores the first batch the response dispatches. Tapestry's prompt makes tasks parallel-safe only when their Files are completely disjoint and neither task's output is the other's input, with at most three at once. Here both traps are hidden: task 3 says `Depends on: None` but its What uses task 1's new field, and task 4 shares only the test file with task 2. Pass a response whose first dispatch sends two or three of tasks 1, 2 and 5 together. Fail the response if its first batch includes task 3 or task 4, or if it dispatches only one task first (running the plan serially is the failure the session audit found). Later batches the response sketches do not change the verdict, as long as the first one is right. This is a text-only eval: a delegation written out in full counts as sent, even when the response says it cannot call tools or phrases it as what it would do."
+  }
+}

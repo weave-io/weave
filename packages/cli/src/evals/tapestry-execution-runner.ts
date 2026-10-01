@@ -15,6 +15,11 @@
  *   6. Emits a `CaseResult` with a publishable `CaseResultSummary` (no raw
  *      content) and an optional local-only `RawCaseResultArtifact`.
  *
+ * Cases tagged `own-envelope` carry the active plan file and what happened
+ * in the last step in their description; the runner sends it as written
+ * and the judge scores the response against the case's expected outcome
+ * (see `OWN_ENVELOPE_CONTINUE_LINE`).
+ *
  * # Prompt provider
  *
  * The runner accepts a `PromptProvider` in its options. When omitted, a
@@ -74,7 +79,11 @@ import {
 } from "./case-loader.js";
 import { classifyErrorType, countCaseOutcomes } from "./case-outcomes.js";
 import { type EvalTrack, selectCasesForTrack } from "./eval-track.js";
-import { hasAffirmedMatch, isJudgmentCase } from "./judgment-cases.js";
+import {
+  carriesOwnEnvelope,
+  hasAffirmedMatch,
+  isJudgmentCase,
+} from "./judgment-cases.js";
 import {
   type AgentEvalsScorer,
   buildPublicExplanation,
@@ -353,10 +362,16 @@ const MARKED_COMPLETE_RE =
   /\[x\]|\bmark(?:s|ed|ing)?\b[^.\n]{0,40}?\b(?:complete|completed|done)\b|\btask (?:is )?(?:complete|completed|done)\b|\bdone\s+1\/1\b|\b1\/1 done\b/gi;
 // Verb forms only: models discuss the noun ("no re-delegation needed") when
 // they decide against it, so "re-delegation" alone is not an action. A new
-// delegation envelope uses the bracketed `Task [1/1]:` form; a plain
+// delegation envelope uses the bracketed `Task [1/1]:` form, or ends with
+// the line addressing it to an agent (`@shuttle`); a plain
 // "Task 1/1: mark complete" heading is not one.
 const REDELEGATED_RE =
-  /\bre-?delegat(?:e|es|ed|ing)\b|\bdelegat(?:e|es|ed|ing)\b[^.\n]{0,30}?\b(?:back|again)\b|\bsend(?:s|ing)?\b[^.\n]{0,20}?\bback\b|^\s*Task \[1\/1\]:/gim;
+  /\bre-?delegat(?:e|es|ed|ing)\b|\bdelegat(?:e|es|ed|ing)\b[^.\n]{0,30}?\b(?:back|again)\b|\bsend(?:s|ing)?\b[^.\n]{0,20}?\bback\b|^\s*Task \[1\/1\]:|^\s*@[a-z][\w-]*\s*$/gim;
+// A mark the response puts off rather than makes: "before marking `[x]`",
+// "until it is marked done", "if the docs are there, mark it complete".
+// Tested against the text before the match on the same line.
+const DEFERRED_MARK_RE =
+  /\b(?:before|until|unless|if|only when|only after)\b[^.\n]{0,30}$/i;
 const FAILURE_CITED_RE =
   /\b[1-9]\d*\s+fail(?:s|ed|ing|ures?)?\b|\bfail(?:ed|ing|ures?)\b/i;
 
@@ -376,7 +391,11 @@ export interface PlanDecisionSignals {
 export function extractPlanDecisionSignals(
   content: string,
 ): PlanDecisionSignals {
-  const markedComplete = hasAffirmedMatch(content, MARKED_COMPLETE_RE);
+  const markedComplete = hasAffirmedMatch(
+    content,
+    MARKED_COMPLETE_RE,
+    DEFERRED_MARK_RE,
+  );
   const redelegated = hasAffirmedMatch(content, REDELEGATED_RE);
   const failureCited = FAILURE_CITED_RE.test(content);
 
@@ -591,6 +610,13 @@ function buildDryRunResult(evalCase: EvalCase, modelId: string): CaseResult {
 // ---------------------------------------------------------------------------
 
 /**
+ * What an own-envelope case asks after the situation it describes. Text-only:
+ * the model writes out the actions it would take instead of calling tools.
+ */
+export const OWN_ENVELOPE_CONTINUE_LINE =
+  "Continue executing the plan from this point. This is a text-only eval with no harness tools, so write out what you do next: todo and plan updates, and each delegation message in full.";
+
+/**
  * Build the user message for a Tapestry execution case.
  *
  * Includes hints about the expected outcome kind to help the model produce
@@ -611,6 +637,13 @@ export function buildUserMessage(evalCase: EvalCase): string {
       "",
       "Decide what happens to this task next and state the decision explicitly: either mark it `[x]` complete, or re-delegate it to the specialist with the specific gap.",
     ].join("\n");
+  }
+
+  // Own-envelope cases carry the plan file and what happened in the last
+  // step. The model is told only to carry on: no completion cue to copy and
+  // no hint of the expected decision, which the judge reads from the case.
+  if (carriesOwnEnvelope(evalCase)) {
+    return [evalCase.description, "", OWN_ENVELOPE_CONTINUE_LINE].join("\n");
   }
 
   const planContext = [

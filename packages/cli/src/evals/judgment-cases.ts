@@ -35,6 +35,23 @@ export function isJudgmentCase(evalCase: EvalCase): boolean {
 }
 
 /**
+ * Tag for a case whose description is the whole situation the agent acts
+ * on. For Shuttle that is the delegated task envelope plus what happened in
+ * the session so far (edits made, commands run and the output observed). For
+ * Tapestry it is the active plan file plus what happened in the last step
+ * (a specialist's report, a delegation error, a continuation). The runner
+ * sends it as written, with no section script or completion cue, and the
+ * judge scores the response against the case's expected outcome. Judgment
+ * cases carry their own envelope too, but are scored on deterministic
+ * signals.
+ */
+export const OWN_ENVELOPE_CASE_TAG = "own-envelope";
+
+export function carriesOwnEnvelope(evalCase: EvalCase): boolean {
+  return evalCase.tags.includes(OWN_ENVELOPE_CASE_TAG);
+}
+
+/**
  * Builds the "Required structural signals" line for a runner's user message.
  * Judgment cases withhold the signal names because they encode the verdict.
  */

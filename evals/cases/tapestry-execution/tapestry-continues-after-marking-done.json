@@ -1,0 +1,21 @@
+{
+  "id": "tapestry-continues-after-marking-done",
+  "description": "Active plan: `.weave/plans/webhook-signing.md`\n\nPlan file as it stands now:\n\n```md\n# Webhook signing\n\n## Tasks\n\n- [x] 1. Add a signing secret to the webhook settings\n  - **Files**: `src/webhooks/settings.ts`\n  - **Depends on**: None\n\n- [x] 2. Sign outgoing webhook bodies with HMAC-SHA256\n  - **Files**: `src/webhooks/sign.ts`, `src/webhooks/sign.test.ts`\n  - **Depends on**: 1\n\n- [ ] 3. Send the signature in an `X-Ledger-Signature` header\n  - **Files**: `src/webhooks/send.ts`, `src/webhooks/send.test.ts`\n  - **Depends on**: 2\n  - **Acceptance**: every webhook request carries `X-Ledger-Signature` — verify by: `bun test src/webhooks/send.test.ts`\n\n- [ ] 4. Document signature verification for webhook consumers\n  - **Files**: `docs/webhooks.md`\n  - **Depends on**: 3\n  - **Acceptance**: `docs/webhooks.md` shows how to verify `X-Ledger-Signature` with the signing secret\n```\n\nTask 3 was delegated to `shuttle`. Its report, just returned:\n\n```\nFiles changed:\n- src/webhooks/send.ts: adds X-Ledger-Signature from signBody()\n- src/webhooks/send.test.ts: asserts the header on every request\n\nCommands run and their output:\n$ bun test src/webhooks/send.test.ts\n✓ sends the body as JSON\n✓ sets X-Ledger-Signature on every request\n 2 pass\n 0 fail\n\nAcceptance confirmation: every webhook request carries X-Ledger-Signature, shown by the second test.\n\nNote: docs/webhooks.md is public. Suggest checking with the user before task 4.\n```",
+  "suite": "tapestry-execution",
+  "allowed_agents": [
+    "tapestry"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Mark task 3 done and, in the same response, delegate task 4. Do not end the turn, write a final summary or ask whether to continue while task 4 is unchecked.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "execution",
+    "own-envelope",
+    "continuation",
+    "non-terminal"
+  ]
+}

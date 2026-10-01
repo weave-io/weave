@@ -1,0 +1,24 @@
+{
+  "id": "tapestry-rejects-report-missing-criterion",
+  "description": "Task 1/1: Add `--json` output to `weave status`.\n**Files**: `packages/cli/src/commands/status.ts`, `packages/cli/src/commands/__tests__/status.test.ts`, `docs/cli.md`\n**Acceptance**:\n- `weave status --json` prints valid JSON — verify by: `bun test packages/cli/src/commands/__tests__/status.test.ts`\n- `docs/cli.md` documents the `--json` flag with an example of its output\n\nReport returned by shuttle:\n```\nFiles changed:\n- packages/cli/src/commands/status.ts: added the --json flag\n- packages/cli/src/commands/__tests__/status.test.ts: added a JSON output test\n\nCommands run and their output:\n$ bun test packages/cli/src/commands/__tests__/status.test.ts\n✓ status prints a table [2.10ms]\n✓ status --json prints valid JSON [1.90ms]\n 2 pass\n 0 fail\n\nTest results: 2 pass, 0 fail.\n\nAcceptance confirmation: all acceptance criteria are met; the --json output is covered by the passing test above.\n```",
+  "suite": "tapestry-execution",
+  "allowed_agents": [
+    "tapestry"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Do not mark the task complete: the report never changed `docs/cli.md`, so the documentation criterion is unmet even though the tests pass. Re-delegate it to the specialist with that gap.",
+    "required_artifacts": [
+      "tapestry_task_not_completed",
+      "tapestry_task_redelegated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "execution",
+    "judgment",
+    "verification",
+    "missing-criterion"
+  ]
+}

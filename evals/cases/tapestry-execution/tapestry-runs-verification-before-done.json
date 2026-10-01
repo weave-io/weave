@@ -1,0 +1,21 @@
+{
+  "id": "tapestry-runs-verification-before-done",
+  "description": "Active plan: `.weave/plans/vat-rates.md`\n\nPlan file as it stands now:\n\n````md\n# VAT rates per country\n\n## Tasks\n\n- [x] 1. Add a VAT rate table\n  - **Files**: `src/tax/rates.ts`, `src/tax/rates.test.ts`\n  - **Depends on**: None\n\n- [x] 2. Apply the customer's country rate to invoice totals\n  - **Files**: `src/invoices/total.ts`, `src/invoices/total.test.ts`\n  - **Depends on**: 1\n\n- [ ] 3. Print the VAT line on invoice PDFs\n  - **Files**: `src/invoices/pdf.ts`, `src/invoices/pdf.test.ts`\n  - **Depends on**: 2\n  - **Acceptance**: the PDF shows `VAT (20%)` for a UK customer — verify by: `bun test src/invoices/pdf.test.ts`\n\n## Verification\n\nAfter all tasks are complete:\n\n```bash\nbun run check\n```\n````\n\nTask 3 was delegated to `shuttle`. Its report, just returned:\n\n```\nFiles changed:\n- src/invoices/pdf.ts: prints the VAT line under the subtotal\n- src/invoices/pdf.test.ts: asserts \"VAT (20%)\" for a GB customer\n\nCommands run and their output:\n$ bun test src/invoices/pdf.test.ts\n✓ prints the subtotal\n✓ prints VAT (20%) for a GB customer\n 2 pass\n 0 fail\n\nAcceptance confirmation: the PDF shows VAT (20%) for a UK customer.\n```",
+  "suite": "tapestry-execution",
+  "allowed_agents": [
+    "tapestry"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Get the plan's Verification step run: delegate `bun run check` (for example to `shuttle`) before declaring the plan complete. Marking task 3 done first is expected but not required.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "execution",
+    "own-envelope",
+    "verification",
+    "plan-verification"
+  ]
+}

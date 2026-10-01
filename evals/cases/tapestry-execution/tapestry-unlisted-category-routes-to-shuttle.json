@@ -1,0 +1,22 @@
+{
+  "id": "tapestry-unlisted-category-routes-to-shuttle",
+  "description": "Active plan: `.weave/plans/invoice-pdf-export.md`\n\nPlan file as it stands now:\n\n```md\n# Invoice PDF export\n\n## Tasks\n\n- [x] 1. Render an invoice to PDF\n  - **Files**: `src/invoices/pdf.ts`, `src/invoices/pdf.test.ts`\n  - **Depends on**: None\n\n- [ ] 2. Add a \"Download PDF\" button to the invoice page\n  - **What**: Add a button that calls `GET /invoices/:id/pdf` and saves the file.\n  - **Agent**: shuttle-frontend\n  - **Files**: `web/src/invoices/InvoicePage.tsx`, `web/src/invoices/InvoicePage.test.tsx`\n  - **Depends on**: 1\n  - **Acceptance**:\n    - The button appears on the invoice page and downloads `invoice-<number>.pdf` — verify by: `bun test web/src/invoices`\n\n- [ ] 3. Document the PDF endpoint\n  - **Files**: `docs/api/invoices.md`\n  - **Depends on**: 1\n  - **Acceptance**:\n    - `docs/api/invoices.md` documents `GET /invoices/:id/pdf`\n```\n\nTask 1 was verified and marked done in the previous step.",
+  "suite": "tapestry-execution",
+  "allowed_agents": [
+    "tapestry"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Delegate task 2 to `shuttle`. The plan names `shuttle-frontend` for it, but that agent is not among the listed specialists. Delegating task 3 in the same step is optional.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "execution",
+    "own-envelope",
+    "routing",
+    "delegation",
+    "session-audit:configuration-failures"
+  ]
+}

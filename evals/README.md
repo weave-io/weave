@@ -28,6 +28,15 @@ evals/
 │   │   ├── tapestry-delegate-to-shuttle.json
 │   │   ├── tapestry-rejects-contradicted-report.json   # judgment
 │   │   ├── tapestry-accepts-evidenced-report.json      # judgment
+│   │   ├── tapestry-unlisted-category-routes-to-shuttle.json   # own-envelope
+│   │   ├── tapestry-holds-tasks-that-share-files.json   # own-envelope
+│   │   ├── tapestry-retries-transient-delegation-error.json   # own-envelope
+│   │   ├── tapestry-falls-back-after-configuration-error.json   # own-envelope
+│   │   ├── tapestry-blocks-task-after-failed-retry.json   # own-envelope
+│   │   ├── tapestry-continues-after-marking-done.json   # own-envelope
+│   │   ├── tapestry-runs-verification-before-done.json   # own-envelope
+│   │   ├── tapestry-rejects-report-missing-criterion.json   # judgment
+│   │   ├── tapestry-resumes-from-plan-file.json   # own-envelope
 │   │   ├── tapestry-runs-plan-verification-trajectory.json   # harness_trajectory
 │   │   └── tapestry-dispatches-independent-tasks-in-parallel-trajectory.json   # harness_trajectory
 │       ├── tapestry-category-routing/      # Tapestry category-routing eval cases
@@ -119,6 +128,15 @@ evals/
     │   ├── tapestry-delegate-to-shuttle.json
     │   ├── tapestry-rejects-contradicted-report.json
     │   ├── tapestry-accepts-evidenced-report.json
+    │   ├── tapestry-unlisted-category-routes-to-shuttle.json
+    │   ├── tapestry-holds-tasks-that-share-files.json
+    │   ├── tapestry-retries-transient-delegation-error.json
+    │   ├── tapestry-falls-back-after-configuration-error.json
+    │   ├── tapestry-blocks-task-after-failed-retry.json
+    │   ├── tapestry-continues-after-marking-done.json
+    │   ├── tapestry-runs-verification-before-done.json
+    │   ├── tapestry-rejects-report-missing-criterion.json
+    │   ├── tapestry-resumes-from-plan-file.json
     │   ├── tapestry-runs-plan-verification-trajectory.json
     │   └── tapestry-dispatches-independent-tasks-in-parallel-trajectory.json
     ├── tapestry-category-routing/      # Scoring rubrics for tapestry-category-routing cases
@@ -412,6 +430,50 @@ remains (`symptom-still-present`, from the [September 2026 session
 audit](../docs/artifacts/session-audit-2026-09.md)), a request to paste a
 secret (`refuses-secret-request`), and the task's learnings and acceptance
 criteria (`applies-learnings`).
+
+### Tapestry-execution fixture guidance
+
+Tapestry's G3 cases (Spec 39 task 0.3) reuse the `own-envelope` tag above.
+Each description is the whole situation Tapestry acts on: the active plan
+file as it stands, in a fenced `md` block, then what happened in the last
+step (a specialist's report, a delegation error, or a continuation with the
+todo list saved before compaction). The runner sends it as written, followed
+only by "Continue executing the plan from this point…", which tells the model
+to write out its todo and plan updates and each delegation in full, since a
+text case has no tools (`buildUserMessage` in
+[`tapestry-execution-runner.ts`](../packages/cli/src/evals/tapestry-execution-runner.ts)).
+It never adds the "Signal completion with \"task complete\"" cue the older
+synthetic cases carry. The judge scores the response against the expected
+outcome and the rubric notes, which end by saying that a delegation written
+out in full counts as sent, even when the response says it cannot call
+tools: the judge failed a correct GPT 6 Sol retry for that hedge before the
+note was added.
+
+The delegation list these cases see is the builtin one (`shuttle`,
+`pattern`, `thread`, `spindle`, `weft`, `warp`), with no category shuttles,
+because evals score the shipped config. A case that needs a category shuttle
+belongs in `tapestry-category-routing`, which composes one per case.
+
+Each case tests one behaviour from `packages/config/prompts/tapestry.md`:
+
+| Case | Behaviour |
+| --- | --- |
+| `unlisted-category-routes-to-shuttle` | The plan names `shuttle-frontend`, which is not listed: delegate to `shuttle` |
+| `holds-tasks-that-share-files` | First batch of 2–3 of tasks 1, 2, 5; hold task 3 (uses task 1's field despite `Depends on: None`) and task 4 (shares a test file with task 2) |
+| `retries-transient-delegation-error` | A 503 "overloaded" error that names the model is transient: send the same task to `thread` again |
+| `falls-back-after-configuration-error` | A model that is not available for `thread` is a configuration error: send the task to `shuttle` |
+| `blocks-task-after-failed-retry` | After its one retry still fails, mark task 2 blocked and delegate the independent task 3, even though the report suggests where to look next |
+| `continues-after-marking-done` | Mark the evidenced task done and delegate the next one in the same turn, although the specialist suggests checking with the user |
+| `runs-verification-before-done` | The plan's Verification section is a bare `bun run check` block: get it run before declaring the plan complete |
+| `rejects-report-missing-criterion` (`judgment`) | The report's evidence is true but skips the documentation criterion while claiming all are met: re-delegate |
+| `resumes-from-plan-file` | On a continuation, the plan file (task 3 `[x]`) wins over the stale saved todo list (task 3 in progress): resume at task 4 |
+
+The two recovery cases are a pair that differ only in the error, so a prompt
+that always retries or always falls back fails one of them. Each expected
+outcome names one required behaviour and says what is optional, so the judge
+does not fail a correct answer for leaving out an extra (the Sol run that
+re-verified task 3 alongside `bun run check` passes
+`runs-verification-before-done`).
 
 ### Spindle-tools fixture guidance
 
