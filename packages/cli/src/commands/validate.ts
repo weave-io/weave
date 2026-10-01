@@ -1,9 +1,10 @@
 import { dirname, resolve } from "node:path";
 import {
+  type ConfigLoadDiagnostic,
   type ConfigScope,
   getResolvedBuiltinConfig,
-  loadConfig,
   mergeConfigsResult,
+  type RecommendationsHarness,
   resolvePromptPaths,
 } from "@weaveio/weave-config";
 import {
@@ -27,6 +28,16 @@ import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
 import { BunFileSystem, type FileSystem } from "../fs/file-system.js";
 import type { TerminalIO } from "../io/terminal.js";
+import {
+  chooseHarness,
+  type HarnessChoice,
+  unsupportedMessage,
+} from "../models/harness.js";
+import {
+  type CliModelRecommendationsDeps,
+  RecommendationsSession,
+} from "../models/recommendations-session.js";
+import { validateSummaryLines } from "../models/report.js";
 import type { ThemeColors } from "../theme/colors.js";
 
 export interface ValidateContext {
@@ -34,6 +45,10 @@ export interface ValidateContext {
   theme: ThemeColors;
   flags: ParsedArgs["flags"];
   fs?: FileSystem;
+  /** The clock applied model recommendations are checked against. */
+  now?: () => Date;
+  /** Cache access for reporting model recommendations (Spec 39). */
+  modelRecommendations?: CliModelRecommendationsDeps;
 }
 
 type ValidateError = CliError;
@@ -41,6 +56,8 @@ type ValidateError = CliError;
 type ValidatedConfig = {
   path: string;
   config: WeaveConfig;
+  /** The effective config's diagnostics, when the effective config was loaded. */
+  diagnostics?: readonly ConfigLoadDiagnostic[];
 };
 
 function validateExplicitPath(
@@ -127,46 +144,65 @@ function resolveValidationTarget(
 }
 
 function validateEffective(
+  session: RecommendationsSession,
   fs: FileSystem,
+  harness: RecommendationsHarness | undefined,
 ): ResultAsync<ValidatedConfig, ValidateError> {
-  return loadConfig(fs.cwd())
-    .mapErr(
-      (errors): ValidateError => ({
-        type: "ParseFailure",
-        path: fs.cwd(),
-        errors: errors.flatMap((error) => {
-          if (error.type === "FileReadError")
-            return [`${error.path}: could not read config`];
-          if (error.type === "BuiltinParseError")
-            return error.errors.map((e) => `builtins:${formatError(e)}`);
-          if (error.type === "MergeError")
-            return error.errors.flatMap((e) =>
-              e.type === "ConfigValidationError"
-                ? e.errors.map(
-                    (issue) => `merge:${e.layer}:${formatError(issue)}`,
-                  )
-                : [`merge:${e.type}:${e.error.type}`],
-            );
-          return error.errors.map((e) => `${error.path}:${formatError(e)}`);
-        }),
-      }),
-    )
-    .andThen((config) => checkAgentsMaterialize(fs.cwd(), config))
-    .map((config) => ({ path: fs.cwd(), config }));
+  const cwd = fs.cwd();
+  return session.load(cwd, harness).andThen(({ config, diagnostics }) =>
+    checkAgentsMaterialize(cwd, config, fileSystemPromptReader(fs)).map(() => ({
+      path: cwd,
+      config,
+      diagnostics,
+    })),
+  );
+}
+
+/**
+ * The model recommendations lines (Spec 39): the effective mode, the applied
+ * list's date, or why the layer is pending or skipped. Every form of the
+ * command reports the effective config's setting, since that is what the
+ * harnesses use. Empty when the effective config has no `model_updates`
+ * block, or does not load (the file form then still reports its own result).
+ */
+async function modelUpdatesLines(
+  session: RecommendationsSession,
+  cwd: string,
+  choice: HarnessChoice,
+  validated: ValidatedConfig,
+): Promise<string[]> {
+  const harness = choice.type === "supported" ? choice.harness : undefined;
+  const effective =
+    validated.diagnostics === undefined
+      ? await session.load(cwd, harness)
+      : ok({ config: validated.config, diagnostics: validated.diagnostics });
+  if (effective.isErr()) return [];
+  const { config, diagnostics } = effective.value;
+  const lines = validateSummaryLines(config, diagnostics);
+  const optedIn =
+    config.settings.model_updates !== undefined &&
+    config.settings.model_updates.mode !== "off";
+  if (choice.type === "unsupported" && optedIn)
+    lines.push(`model_recommendations: ${unsupportedMessage(choice)}`);
+  return lines;
 }
 
 /**
  * Harness adapters skip agents whose descriptors cannot be composed (for
  * example an agent with no prompt, or a prompt_file that does not exist).
- * Report those agents instead of letting them disappear at runtime.
+ * Report those agents instead of letting them disappear at runtime. Prompt
+ * files are read through `promptFileReader`, the command's filesystem, when
+ * given.
  */
 export function checkAgentsMaterialize(
   path: string,
   config: WeaveConfig,
+  promptFileReader?: PromptFileReader,
 ): ResultAsync<WeaveConfig, ValidateError> {
-  return materializeAgents({ config }).andThen((plan) =>
-    materializationResult(path, config, plan.errors),
-  );
+  return materializeAgents({
+    config,
+    ...(promptFileReader === undefined ? {} : { promptFileReader }),
+  }).andThen((plan) => materializationResult(path, config, plan.errors));
 }
 
 /**
@@ -251,9 +287,21 @@ export async function runValidate(
   ctx: ValidateContext,
 ): Promise<Result<number, CliError>> {
   const fs = ctx.fs ?? new BunFileSystem();
+  const choice = chooseHarness(ctx.flags.harness);
+  if (choice.isErr()) {
+    ctx.terminal.stderr(formatCliError(choice.error));
+    return ok(1);
+  }
+  const session = new RecommendationsSession(
+    fs,
+    ctx.modelRecommendations,
+    ctx.now,
+  );
+  const harness =
+    choice.value.type === "supported" ? choice.value.harness : undefined;
   const target = resolveValidationTarget(ctx.flags, fs);
   const result = await (target === undefined
-    ? validateEffective(fs)
+    ? validateEffective(session, fs, harness)
     : validateExplicitPath(target.path, fs, target.kind));
 
   if (result.isErr()) {
@@ -261,11 +309,22 @@ export async function runValidate(
     return ok(1);
   }
 
+  const modelUpdates = await modelUpdatesLines(
+    session,
+    fs.cwd(),
+    choice.value,
+    result.value,
+  );
+
   if (ctx.flags.json) {
+    // stdout stays the config document; the report goes to stderr.
     ctx.terminal.stdout(JSON.stringify(result.value.config, null, 2));
+    if (modelUpdates.length > 0) ctx.terminal.stderr(modelUpdates.join("\n"));
     return ok(0);
   }
 
-  ctx.terminal.stdout(formatSummary(result.value.config));
+  ctx.terminal.stdout(
+    [formatSummary(result.value.config), ...modelUpdates].join("\n"),
+  );
   return ok(0);
 }

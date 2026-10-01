@@ -36,6 +36,12 @@ export { formatCliError } from "./errors.js";
 // ---------------------------------------------------------------------------
 export type { TerminalIO } from "./io/terminal.js";
 export { BufferTerminal, RealTerminal } from "./io/terminal.js";
+export type { CliModelRecommendationsDeps } from "./models/recommendations-session.js";
+export type {
+  PromptAdapter,
+  PromptError,
+  PromptOption,
+} from "./prompt/index.js";
 export {
   LOGO_WIDTH,
   PLAIN_LOGO_LINES,

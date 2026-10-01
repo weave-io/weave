@@ -57,12 +57,12 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [x] 4.3 `latest` and `applied` are envelope files written to a unique temporary name and moved into place with Bun Shell `mv` (test pins the rename); writers hold the `lock/` directory (Bun Shell `mkdir`, 60-second stale timeout) and re-check `issued` under the lock. `latest` written only after verification; `auto` promotes to `applied` only when `issued` is later; `notify` holds. Rollback (older `issued`) and replay (same `issued`) leave `applied` unchanged.
 - [x] 4.4 Every failure path leaves both files unchanged and records an error code in `state.json`, under the lock. Lock contention returns `Busy` and writes nothing, `state.json` included. No test touches the network. Also in #288: an opted-in channel with no `applied.json` yet is a `ModelRecommendationsPending` diagnostic, not a skipped layer, so OpenCode 2 raises `model_updates_unavailable` only for a present-but-unusable file.
 
-## 5. CLI — PR:
+## 5. CLI — PR: #291
 
-- [ ] 5.1 `weave models status`: mode, channel, applied `issued` and `evidence`, waiting update, last check and error, per-agent merged list with each entry's source, skipped agent names.
-- [ ] 5.2 `weave models update` (forced refresh), `weave models apply` (promote `latest`), `weave models pin` (write explicit `models` into the global config after printing the diff and asking; `--yes` for scripts).
-- [ ] 5.3 `weave validate` (every form) reports the mode, the applied date, and a skipped layer with its reason.
-- [ ] 5.4 [CLI](../../cli.md) documents the `models` command group; API report (`packages/cli/etc/weave-cli.api.md`) updated.
+- [x] 5.1 `weave models status`: mode, channel, applied `issued` and `evidence`, waiting update, last check and error, per-agent merged list with each entry's source, skipped agent names.
+- [x] 5.2 `weave models update` (forced refresh), `weave models apply` (promote `latest`), `weave models pin` (write explicit `models` into the global config after printing the diff and asking; `--yes` for scripts).
+- [x] 5.3 `weave validate` (every form) reports the mode, the applied date, and a skipped layer with its reason.
+- [x] 5.4 [CLI](../../cli.md) documents the `models` command group; API report (`packages/cli/etc/weave-cli.api.md`) updated. Also: the commands report for OpenCode 2 unless `--harness` says otherwise, `--project-root` (not `--project`, which is `validate`'s boolean) picks the project, and `pin` edits only `models` fields, located with the lexer, and verifies the edit before writing.
 
 ## 6. OpenCode 2 — PR: #292
 
