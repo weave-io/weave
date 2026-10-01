@@ -2334,6 +2334,74 @@ describe("Shuttle reports on work it was never able to run", () => {
   });
 });
 
+describe("Shuttle reports on a delegated task whose session the case describes", () => {
+  const probe = only("shuttle-execution")[0]?.[1] as SuiteProbe;
+  const fixture: FixtureSpec = {
+    ...probe.fixture,
+    id: "shuttle-reports-a-failure-it-did-not-cause",
+    description: [
+      "Task [1/1]: Trim slug edges",
+      "**Files**: `src/slugify.ts`",
+      "Session so far: `bun test` → 11 pass, 1 fail (src/date.test.ts).",
+    ].join("\n"),
+    expectedOutcome: {
+      kind: "task_completion",
+      description:
+        "Report the unrelated failure with its counts and claim no clean run.",
+      required_artifacts: [],
+    },
+    tags: ["execution", "own-envelope"],
+  };
+
+  async function runWith(judgePasses: boolean) {
+    return withEvalFixtures([fixture], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "shuttle-execution",
+        answers: ["Test results: 11 pass, 1 fail in src/date.test.ts."],
+        rawArtifacts: true,
+        judgeOutput: {
+          score: judgePasses ? 0.97 : 0.2,
+          rationale: "judge rationale",
+        },
+      }),
+    );
+  }
+
+  it("hands the model the case's own envelope, with no section script or signal names", async () => {
+    const run = await runWith(true);
+    const asked = run.rawArtifacts[0]?.transcript[0]?.content ?? "";
+
+    expect(asked).toContain("Task [1/1]: Trim slug edges");
+    expect(asked).toContain("Session so far: `bun test`");
+    expect(asked).not.toContain("Synthetic Shuttle delegated task");
+    expect(asked).not.toContain("Commands run and their output");
+    expect(asked).not.toContain("Required structural signals");
+  });
+
+  it("asks the judge whether the report reaches the case's expected outcome", async () => {
+    const run = await runWith(true);
+    const call = run.judgeCalls.find(
+      (c) => c.dimension === "executionCompleteness",
+    );
+
+    expect(call?.response).toBe(
+      "Test results: 11 pass, 1 fail in src/date.test.ts.",
+    );
+    expect(call?.criteria.map((c) => c.question)).toEqual([
+      "Does the response achieve the expected outcome: Report the unrelated failure with its counts and claim no clean run.?",
+    ]);
+  });
+
+  it("lets the judge's verdict decide, since quoting observed counts is not an unobserved pass", async () => {
+    const passed = await runWith(true);
+    const failed = await runWith(false);
+
+    expect(passed.firstCase?.passed).toBe(true);
+    expect(failed.firstCase?.passed).toBe(false);
+  });
+});
+
 // --- Spindle ---------------------------------------------------------------
 
 const SPINDLE_ANSWERS: SignalRow[] = [

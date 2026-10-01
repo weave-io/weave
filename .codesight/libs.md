@@ -579,10 +579,10 @@
   - function extractShuttleHonestySignals: (content) => ShuttleHonestySignals
   - function extractShuttleExecutionSignals: (content) => ShuttleExecutionSignals
   - function redactSecrets: (raw) => string
+  - function carriesOwnEnvelope: (evalCase) => boolean
   - function buildUserMessage: (evalCase) => string
   - class ShuttleExecutionRunner
-  - interface ShuttleHonestySignals
-  - _...4 more_
+  - _...6 more_
 - `packages/cli/src/evals/spindle-tools-runner.ts`
   - function extractSpindleResearchSignals: (content) => SpindleResearchSignals
   - function redactSecrets: (raw) => string

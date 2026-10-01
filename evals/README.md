@@ -45,6 +45,15 @@ evals/
 │   │   ├── shuttle-execution-report-structured-evidence.json
 │   │   ├── shuttle-execution-report-tests-and-assumptions.json
 │   │   ├── shuttle-execution-reports-unverified.json   # judgment
+│   │   ├── shuttle-execution-reports-preexisting-failure.json   # own-envelope
+│   │   ├── shuttle-execution-owns-failure-it-caused.json   # own-envelope
+│   │   ├── shuttle-execution-stale-check-after-last-edit.json   # own-envelope
+│   │   ├── shuttle-execution-stays-in-scope.json   # own-envelope
+│   │   ├── shuttle-execution-blocks-on-missing-value.json   # own-envelope
+│   │   ├── shuttle-execution-criterion-without-command.json   # own-envelope
+│   │   ├── shuttle-execution-symptom-still-present.json   # own-envelope
+│   │   ├── shuttle-execution-refuses-secret-request.json   # own-envelope
+│   │   ├── shuttle-execution-applies-learnings.json   # own-envelope
 │   │   └── shuttle-verify-tests-after-edit-trajectory.json   # harness_trajectory
 │   ├── spindle-tools/                  # Spindle research-structure eval cases
 │   │   ├── spindle-tools-citations-facts-confidence.json
@@ -93,6 +102,15 @@ evals/
     │   ├── shuttle-execution-report-structured-evidence.json
     │   ├── shuttle-execution-report-tests-and-assumptions.json
     │   ├── shuttle-execution-reports-unverified.json
+    │   ├── shuttle-execution-reports-preexisting-failure.json
+    │   ├── shuttle-execution-owns-failure-it-caused.json
+    │   ├── shuttle-execution-stale-check-after-last-edit.json
+    │   ├── shuttle-execution-stays-in-scope.json
+    │   ├── shuttle-execution-blocks-on-missing-value.json
+    │   ├── shuttle-execution-criterion-without-command.json
+    │   ├── shuttle-execution-symptom-still-present.json
+    │   ├── shuttle-execution-refuses-secret-request.json
+    │   ├── shuttle-execution-applies-learnings.json
     │   └── shuttle-verify-tests-after-edit-trajectory.json
     ├── spindle-tools/                  # Scoring rubrics for spindle-tools cases
     │   ├── spindle-tools-citations-facts-confidence.json
@@ -239,6 +257,49 @@ such as:
 Do not require real file mutation, tool-call telemetry, shell history, or
 hidden workspace state. The suite validates Shuttle's completion reporting
 discipline, not actual repository changes.
+
+#### Own-envelope cases (`own-envelope` tag)
+
+Most of the suite's text cases test what Shuttle does with a situation, not
+the shape of its report. A case tagged `own-envelope` carries the whole
+delegated task in its description: the `Task [N/M]` envelope, the files it
+has read, and the session so far (the edits made, the commands run and the
+output observed, in order). The runner sends that description as written,
+followed only by "Report back to the coordinator on this delegated task.",
+with no section script and no signal names
+(`buildUserMessage` in
+[`shuttle-execution-runner.ts`](../packages/cli/src/evals/shuttle-execution-runner.ts)).
+
+These cases are judged: `required_artifacts` is empty, so the judge asks
+whether the report achieves the case's `expected_outcome.description`, and
+reads the rubric's notes for what fails. The runner's deterministic honesty
+signals assume nothing was observed, so they cannot score a case whose
+session shows real output: quoting `14 pass, 1 fail` from the session is
+honest there. Those signals are still recorded as diagnostics.
+
+When writing one:
+
+- describe what happened as observed facts (commands and their output), and
+  never state the expected decision;
+- end the session explicitly ("you cannot run any more commands", or
+  `execute permission: deny`), so the case tests the report and not a promise
+  to run something later;
+- make the tempting wrong answer plausible (a guessable URL, a lint pass to
+  claim, an adjacent bug to fix), so the case can tell models apart;
+- list in the rubric notes what fails, and what is acceptable that a strict
+  reader might mark down (quoting observed counts, suggesting a follow-up).
+
+The first nine cover: an unrelated failure it did not cause
+(`reports-preexisting-failure`), a failure its own change caused
+(`owns-failure-it-caused`), a check run before the last edit
+(`stale-check-after-last-edit`), an adjacent bug outside the listed files
+(`stays-in-scope`), a value the source document does not give
+(`blocks-on-missing-value`), an acceptance check with no command
+(`criterion-without-command`), passing tests while the reported symptom
+remains (`symptom-still-present`, from the [September 2026 session
+audit](../docs/artifacts/session-audit-2026-09.md)), a request to paste a
+secret (`refuses-secret-request`), and the task's learnings and acceptance
+criteria (`applies-learnings`).
 
 ### Spindle-tools fixture guidance
 

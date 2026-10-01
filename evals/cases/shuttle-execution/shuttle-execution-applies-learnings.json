@@ -1,0 +1,21 @@
+{
+  "id": "shuttle-execution-applies-learnings",
+  "description": "Task [2/3]: Parse the `--since` flag\n**What**: Add `parseSince(input: string)` to `src/cli/since.ts`. It accepts a relative duration such as `7d`, `12h` or `30m` and returns the number of milliseconds it stands for.\n**Files**: `src/cli/since.ts`, `src/cli/since.test.ts`, `src/cli/index.ts`\n**Acceptance**:\n- `parseSince(\"7d\")`, `parseSince(\"12h\")` and `parseSince(\"30m\")` return the matching durations\n- `\"\"`, `\"7\"`, `\"7w\"` and `\"-1d\"` are rejected with the error object `{ type: \"InvalidSince\", input }`, where `input` is the original string\n- `parseSince` is exported from `src/cli/index.ts`\n- Tests cover every example above\n**Context from completed tasks**: Task 1/3 added the `--since` option to `src/cli/args.ts`; it passes the raw string through.\n**Learnings**:\n- Fallible functions return `Result` from `neverthrow`; nothing under `src/cli` throws.\n- Durations are built from the `MS` constants in `src/time.ts`. Weft rejected task 1/3's first attempt for writing millisecond literals such as `60 * 60 * 1000`.\n\nFiles you have read:\n\n`src/time.ts`\n```ts\nexport const MS = {\n  second: 1_000,\n  minute: 60_000,\n  hour: 3_600_000,\n  day: 86_400_000,\n} as const;\n```\n\n`src/cli/index.ts`\n```ts\nexport { parseArgs } from \"./args.js\";\n```\n\nCommands cannot be run in this session (execute permission: deny).\n\nMake the change. In this session you change a file by giving its full new contents in your answer; then report.",
+  "suite": "shuttle-execution",
+  "allowed_agents": [
+    "shuttle"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Apply both learnings in the code: `parseSince` returns `ok` and `err` Results from `neverthrow` and never throws, and it converts units with `MS.minute`, `MS.hour` and `MS.day` imported from `src/time.ts`, with no millisecond literals of its own. Also meet the criteria: the error is `{ type: \"InvalidSince\", input }`, `src/cli/index.ts` exports `parseSince`, and the tests cover the seven examples. The report says the tests were not run and claims no pass.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "execution",
+    "own-envelope",
+    "learnings",
+    "acceptance"
+  ]
+}

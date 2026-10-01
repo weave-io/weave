@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 244 lib files | 30 env vars | 11 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~22,200 tokens. Without it, AI exploration would cost ~81,100 tokens. **Saves ~58,900 tokens per conversation.**
-> **Last scanned:** 2026-10-01 15:48 — re-run after significant changes
+> **Last scanned:** 2026-10-01 15:51 — re-run after significant changes
 
 ---
 
@@ -590,10 +590,10 @@
   - function extractShuttleHonestySignals: (content) => ShuttleHonestySignals
   - function extractShuttleExecutionSignals: (content) => ShuttleExecutionSignals
   - function redactSecrets: (raw) => string
+  - function carriesOwnEnvelope: (evalCase) => boolean
   - function buildUserMessage: (evalCase) => string
   - class ShuttleExecutionRunner
-  - interface ShuttleHonestySignals
-  - _...4 more_
+  - _...6 more_
 - `packages/cli/src/evals/spindle-tools-runner.ts`
   - function extractSpindleResearchSignals: (content) => SpindleResearchSignals
   - function redactSecrets: (raw) => string
