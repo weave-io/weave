@@ -19,6 +19,7 @@ See [Documentation Policy](../documentation-policy.md) for the full classificati
 - [`eval-copilot-default-models-2026-09-29.md`](eval-copilot-default-models-2026-09-29.md) — the evals and live Copilot check behind the GitHub Copilot defaults: Sonnet 5.5 against Sonnet 5 on Shuttle, GPT 6 Sol against Luna on Spindle, and the models an OpenCode 2 host signed in to Copilot registers. Local only.
 - [`model-recommendations-spike.md`](model-recommendations-spike.md) — Spec 39 spike (1 Oct 2026): Ed25519 verification in Bun, the recommendations config layer, and a live model change on OpenCode 2.0.16 without a restart; found that a skipped recommendations layer reverts agents to their builtin models, and proposed atomic promotion as the mitigation.
 - [`eval-readiness-model-recommendations.md`](eval-readiness-model-recommendations.md) — Spec 39 (1 Oct 2026): the agent evals measured against the model-recommendation publication bar, agent by agent, with the smallest regression each suite can detect, and the gaps (G1–G13) to close before a list that changes a model can ship.
+- [`model-recommendations-live-proof-2026-10-01.md`](model-recommendations-live-proof-2026-10-01.md) — Spec 39 item 8 (1 Oct 2026): the released `0.3.0-next.0` adapter and CLI on a live OpenCode 2.0.16 host: the live tryweave.io list, a new list reaching Loom without a restart, the `models.changed` event and TUI toast, a tampered list rejected, and a corrupt `applied.json` skipped and recovered; found that the `status` RPC fails while `model_updates_unavailable` is reported (#303).
 
 ---
 

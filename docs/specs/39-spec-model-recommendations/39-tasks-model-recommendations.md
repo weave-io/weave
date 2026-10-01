@@ -78,17 +78,17 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [ ] 6b.2 Pi: the same at `session_start`, with `harness: "pi"`, in the Pi adapter (its source is outside this repository; open the PR where it lives). Blocked: only Pi's API reports are under `packages/adapters/pi`; this waits for the location of its source.
 - [x] 6b.3 Tests with a stub fetch: opted in, a session start triggers one refresh; `mode off`, none. Claude Code part: `tests/adapters/claude-code-model-updates.scenario.test.ts` (also a failing or hanging check never fails composition) and `compose-refresh.test.ts`.
 
-## 7. Website (`pgermishuys/weave-website`) — PR:
+## 7. Website (`pgermishuys/weave-website`) — PR: pgermishuys/weave-website#12
 
-- [ ] 7.1 `public/models/stable.v1.json` and `next.v1.json`, initially repeating today's builtin lists.
-- [ ] 7.2 Deploy workflow: verify each committed envelope (payload equals the list beside it; `weave models check --envelope --expect`, plus `--issued-after` the live list when the envelope changed: signature, schema, freshness, rollback, catalog resolution, `evidence` present); fail the deploy on any error. Signing is offline with `scripts/models/sign.ts`; no key in CI.
-- [ ] 7.3 nginx: `/models/` served as `application/json`, `Cache-Control: public, max-age=300`, ETag.
-- [ ] 7.4 User docs page: how to opt in, the commands, channels, what the request sends.
+- [x] 7.1 `public/models/stable.v1.json` and `next.v1.json`, initially repeating today's builtin lists.
+- [x] 7.2 Deploy workflow: verify each committed envelope (payload equals the list beside it; `weave models check --envelope --expect`, plus `--issued-after` the live list when the envelope changed: signature, schema, freshness, rollback, catalog resolution, `evidence` present); fail the deploy on any error. Signing is offline with `scripts/models/sign.ts`; no key in CI.
+- [x] 7.3 nginx: `/models/` served as `application/json`, `Cache-Control: public, max-age=300`, ETag.
+- [x] 7.4 User docs page: how to opt in, the commands, channels, what the request sends.
 
-## 8. Live proof — PR:
+## 8. Live proof — PR: #307; see the [live proof record](../../artifacts/model-recommendations-live-proof-2026-10-01.md) (1 Oct 2026, released `0.3.0-next.0` packages)
 
-- [ ] 8.1 On a real OpenCode 2 host with `mode auto` and `WEAVE_MODEL_RECOMMENDATIONS_URL` pointing at a locally served signed file: publish a new list, observe Loom's model change after the refresh with no restart.
-- [ ] 8.2 Serve a tampered file: it is rejected, `status` reports it, and Loom keeps its model.
-- [ ] 8.2a Corrupt the local `applied.json` by hand: the layer is skipped, agents fall back to their builtin lists, and `status` carries `model_updates_unavailable` until the next successful promotion replaces the file. Promotions under load never produce that state (atomic envelopes).
-- [ ] 8.3 Record both under `docs/artifacts/` and link them from Spec 39.
-- [ ] 8.4 On the same host, see the TUI toast that the `models.changed` event produces when Loom moves (6.4).
+- [x] 8.1 On a real OpenCode 2 host with `mode auto` and `WEAVE_MODEL_RECOMMENDATIONS_URL` pointing at a locally served signed file: publish a new list, observe Loom's model change after the refresh with no restart. Loom moved `proof-loom-a` → `proof-loom-b` on the first prompt after `weave models update`, same service process; the live tryweave.io `stable` list (8.0) applied and left Loom on its builtin resolution.
+- [x] 8.2 Serve a tampered file: it is rejected, `status` reports it, and Loom keeps its model. `SignatureInvalid`; `weave models status` shows the error (the `status` RPC carries no last-check error, by design).
+- [ ] 8.2a Corrupt the local `applied.json` by hand: the layer is skipped, agents fall back to their builtin lists, and `status` carries `model_updates_unavailable` until the next successful promotion replaces the file. Promotions under load never produce that state (atomic envelopes). Live: the layer was skipped, agents fell back and `weave models status` said why, and a forced `weave models update` recovered from `latest.json` on a 304; but the `status` RPC failed instead of reporting `model_updates_unavailable` (#303), and promotions under load were not exercised live. Open until #303 is fixed and rechecked.
+- [x] 8.3 Record both under `docs/artifacts/` and link them from Spec 39. Recorded in the [live proof record](../../artifacts/model-recommendations-live-proof-2026-10-01.md); issues #303, #304, #305.
+- [x] 8.4 On the same host, see the TUI toast that the `models.changed` event produces when Loom moves (6.4). Seen in the TUI (driven in tmux): "Loom now runs on proof-loom-b (model recommendations of 1 Oct 2026)" for about 5 s; the event was also received by an external SDK subscriber.
