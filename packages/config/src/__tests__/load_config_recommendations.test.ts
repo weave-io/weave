@@ -512,7 +512,6 @@ describe("loadConfigDetailed with an applied list it cannot use", () => {
   };
 
   const cases: Case[] = [
-    { name: "missing", reason: "Missing", files: async () => ({}) },
     {
       name: "unreadable",
       reason: "Unreadable",
@@ -617,6 +616,22 @@ describe("loadConfigDetailed with an applied list it cannot use", () => {
       ).toBeGreaterThan(0);
     });
   }
+
+  it("reports an opted-in channel with nothing applied yet as pending, not skipped", async () => {
+    const files: FileMap = {
+      [GLOBAL_PATH]: `${OPT_IN}\nagent loom { models ["my-model"] }`,
+    };
+    const { loaded } = await load(files);
+    expect(loaded.config).toEqual(await today(files));
+    expect(loaded.diagnostics).toEqual([
+      {
+        type: "ModelRecommendationsPending",
+        channel: "stable",
+        harness: "opencode2",
+        path: STABLE_APPLIED,
+      },
+    ]);
+  });
 
   it("compares min_config_version with MODEL_RECOMMENDATIONS_CLIENT_VERSION by default", async () => {
     const { loaded } = await load({

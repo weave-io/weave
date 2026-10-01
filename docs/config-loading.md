@@ -103,7 +103,7 @@ The format and its checks:
 5. [`ModelRecommendationsLayerReader`](../packages/config/src/model-recommendations-layer.ts) takes the harness's section (else `default`) and keeps only agents the builtin config defines. Each becomes `agents.<name>.models` in a layer that sets nothing else. Other names are skipped and listed in the diagnostic.
 6. The layers merge as `builtins → recommendations → global → project`. Arrays union-merge override-first, so every builtin agent's list becomes `[project…, global…, recommended…, builtin…]` with duplicates removed. A user's own entries still come first, the builtin entries stay as the fallback tail, and `disable agents` still wins because the layer never touches `disabled`.
 
-A missing, unreadable, unsigned, tampered, invalid, expired, too-new or wrong-channel file is not a config error. The layer is skipped, the config loads as if `mode` were `off`, and a `ModelRecommendationsSkipped` diagnostic says why. This follows the [partial-config policy](adapters/opencode2-core.md#partial-and-broken-configs): an optional input must not cost the user their agents.
+A missing, unreadable, unsigned, tampered, invalid, expired, too-new or wrong-channel file is not a config error. The config loads as if `mode` were `off`. A missing file is the normal state before the first promotion (and in `notify` mode until `weave models apply`), so it is a `ModelRecommendationsPending` diagnostic, not a problem; a file that is there but cannot be used is a `ModelRecommendationsSkipped` diagnostic that says why. This follows the [partial-config policy](adapters/opencode2-core.md#partial-and-broken-configs): an optional input must not cost the user their agents.
 
 ### `loadConfigDetailed` and diagnostics
 
@@ -131,11 +131,61 @@ Options: `harness`, `now` (the clock for expiry and skew), `clientVersion` (defa
 | `type` | When | Fields |
 | --- | --- | --- |
 | `ModelRecommendationsApplied` | A verified list was merged | `channel`, `harness`, `section` (the harness or `default`), `path`, `issued`, `expires`, `evidence`, `agents` (builtins it set), `skippedAgents` (names this version does not define) |
-| `ModelRecommendationsSkipped` | The user opted in but the layer was left out | `channel`, `harness`, `path`, `reason` |
+| `ModelRecommendationsPending` | The user opted in, but nothing is applied for the channel yet: no `applied.json`. Not an error | `channel`, `harness`, `path` |
+| `ModelRecommendationsSkipped` | The user opted in, and `applied.json` is there but could not be used | `channel`, `harness`, `path`, `reason` |
 
-`reason` is a `ModelRecommendationsSkipReason`: `Missing` (nothing applied yet), `Unreadable`, `LayerInvalid` (a Weave bug), or any `ModelRecommendationsError` from the verifier, such as `EnvelopeInvalid`, `SignatureInvalid`, `SchemaInvalid`, `ChannelMismatch`, `ClientTooOld`, `Expired`, `IssuedInFuture` or `OlderThanBuiltins`. `describeModelRecommendationsSkipReason` gives a one-line user-facing reason.
+`reason` is a `ModelRecommendationsSkipReason`: `Unreadable`, `LayerInvalid` (a Weave bug), or any `ModelRecommendationsError` from the verifier, such as `EnvelopeInvalid`, `SignatureInvalid`, `SchemaInvalid`, `ChannelMismatch`, `ClientTooOld`, `Expired`, `IssuedInFuture` or `OlderThanBuiltins`. `describeModelRecommendationsSkipReason` gives a one-line user-facing reason.
 
-Callers: OpenCode 2's catalog build passes `harness: "opencode2"` and reports a skipped layer as the `model_updates_unavailable` status issue ([OpenCode 2 core](adapters/opencode2-core.md)); `weave compose --adapter claude-code` passes `harness: "claude-code"` and logs a skipped layer. Fetching and the `weave models` commands that write the cache are Spec 39 items 4 and 5.
+Callers: OpenCode 2's catalog build passes `harness: "opencode2"` and reports a skipped layer, and an `applied.json` whose existence could not be checked, as the `model_updates_unavailable` status issue; a pending channel is not an issue ([OpenCode 2 core](adapters/opencode2-core.md#model-recommendations)). `weave compose --adapter claude-code` passes `harness: "claude-code"` and logs a skipped layer. The cache the loader reads is written by `ModelRecommendations`, below; the `weave models` commands and adapter refresh triggers are Spec 39 items 5, 6 and 6b.
+
+### Fetching and the cache
+
+[`ModelRecommendations`](../packages/config/src/model-recommendations-refresh.ts) fills the cache the loader reads. It is the only writer. Callers decide when to call it; the loader never does, so loading never touches the network.
+
+```
+<global>/cache/model-recommendations/<channel>/
+├── latest.json    # last verified download, as the served envelope
+├── applied.json   # what the loader merges, same envelope
+├── state.json     # { version, lastCheck, etag, lastError: { code, message, at } }
+└── lock/          # present while one process refreshes or applies
+```
+
+`<global>` honours `WEAVE_GLOBAL_CONFIG_DIR`, and every path comes from [`modelRecommendationsCachePaths`](../packages/config/src/model-recommendations-cache.ts), the same helper the loader uses. Each envelope file holds the signed bytes and their signature together, so a reader can never pair a new list with an old signature.
+
+```ts
+import { ModelRecommendations } from "@weaveio/weave-config";
+
+const models = new ModelRecommendations(); // production fetch, clock, files, shell
+await models.refresh({ settings: config.settings.model_updates });           // throttled
+await models.refresh({ settings: config.settings.model_updates, force: true }); // `weave models update`
+await models.apply({ settings: config.settings.model_updates });             // `weave models apply`
+await models.status({ settings: config.settings.model_updates });            // `weave models status`
+```
+
+All four return a `ResultAsync` with typed outcomes and errors; none throws, and a dependency that throws becomes an `Unexpected` error. Every dependency is injected through `ModelRecommendationsDeps`: `fetch`, `now`, `files` (`exists`, `read`, `write`, `modifiedAt`) and `shell` (`move`, `makeDir`, `makeDirs`, `remove`) from [`model-recommendations-cache-io.ts`](../packages/config/src/model-recommendations-cache-io.ts), plus `globalDir`, `baseUrl`, `publicKeys`, `clientVersion`, `timeoutMs` and `uniqueId` for tests and proofs.
+
+**`refresh({ settings, force? })`**
+
+1. `mode off` or no block: returns `Off` without reading, writing or fetching anything.
+2. Throttle, per channel: after a successful check, the next one waits 24 hours; after a failed one, 1 hour. `force` skips it. A read-only look at `state.json` decides first, so a throttled call (most calls) takes no lock and writes nothing; the decision is made again under the lock. A `lastCheck` in the future (the clock moved back) is ignored.
+3. Take the lock (below), then read `state.json`. A process that cannot take it returns `Busy` and writes nothing, `state.json` included.
+4. One `GET <base>/<channel>.v1.json`, with `If-None-Match` set to the stored ETag and no other header or query parameter. `<base>` is `https://tryweave.io/models`, or `WEAVE_MODEL_RECOMMENDATIONS_URL` for tests and local proofs. Redirects are refused. One 5-second timeout covers the whole exchange, body included, and the body is read chunk by chunk and abandoned as soon as it passes 64 KiB (a larger `Content-Length` is refused before reading).
+5. `304`: record the check (clearing any `lastError`) and nothing else.
+6. `200`: verify the envelope (signature, schema, channel, client version, expiry, 24-hour future skew, the builtin baseline). Only then re-read `applied.json` and `latest.json`, *after* the download, and compare `issued` with the newer of the two that verifies. Older is a rollback, and the same `issued` with different bytes a replay: both fail as `NotNewer`. The same bytes again are `Unchanged`. A newer list is written to `latest.json`; in `auto` mode also to `applied.json`. In `notify` mode it waits for `apply()`.
+7. In `auto` mode, a `latest.json` newer than `applied.json` (downloaded while the user was on `notify`) is promoted on the next successful check, if it still verifies.
+8. Record the check in `state.json`: `lastCheck`, and the response's ETag only when its body was accepted. Any failure leaves `latest.json` and `applied.json` as they were and records `lastError` (`code` is the failure's type, such as `Timeout`, `HttpStatus`, `SignatureInvalid`, `NotNewer` or `CacheIoError`), keeping the previous ETag. A `state.json` that cannot be written after a successful check is logged and the outcome kept: the files are in place, and only the throttle is lost.
+
+Outcomes: `Off`, `Throttled` (`lastCheck`, `nextCheckAt`), `NotModified`, `Unchanged`, `Downloaded` (`issued`), each check outcome with `promoted` when `applied.json` changed. Errors: `Busy`, `CheckFailed` (a `RefreshFailure`: `Network`, `Timeout`, `HttpStatus`, or any `ModelRecommendationsError`), `CacheFailed` and `Unexpected`. `describeRefreshFailure` gives a one-line reason.
+
+**`apply({ settings })`** takes the lock, re-reads both files, and promotes `latest.json` to `applied.json` when it verifies now and is newer: `Applied`. Otherwise `NothingToApply` (`NoLatest`, or `NotNewer`), or `LatestRejected` when `latest.json` no longer verifies (for example, it expired). `Off` and `Busy` are errors.
+
+**`status({ settings })`** is a read-only snapshot for `weave models status`: `mode`, `channel`, the applied list (`none`, `usable` with `issued`/`expires`/`evidence`, or `unusable` with the reason), a verified newer `latest.json` as `waiting`, `lastCheck`, `nextCheckAt` and `lastError`. Unreadable and invalid files are part of the snapshot; its only error is `Unexpected`.
+
+**Atomic writes.** Every file, `state.json` included, is written to a uniquely named temporary file in the same directory (`.<name>.<uuid>.tmp`) and moved into place with Bun Shell's builtin `mv`, a `rename(2)` within one directory. A reader such as OpenCode 2's catalog sees the old file or the new one, never a partial write. A failed write removes its temporary file. When `auto` writes both `latest.json` and `applied.json`, both temporary files are written before either is moved, so a failed write (disk full, permissions) changes neither. Only a failed rename after both are on disk could replace `latest.json` without `applied.json`; the newer list is then waiting, and the next successful `auto` check promotes it.
+
+**Locking.** `lock/` is created with Bun Shell's `mkdir` (without `-p`), which fails when it exists, so only one process holds it. The CLI and every harness share the cache. Every write happens while holding it, and it is removed when the work ends, whether it succeeded or not. A lock whose modification time is more than 60 seconds old was abandoned by a process that died: it is removed and taking it is tried once more; if that fails, the result is `Busy`. Because the holder re-reads `applied.json` and checks `issued` after its download and before it writes, a slower writer cannot replace a newer list with an older one. One window remains: two processes that judge the same abandoned lock stale at the same instant can both end up holding it. That needs a crashed holder and two takers within milliseconds of each other, and its worst case is one of two verified, fresh lists landing last; the next check replaces it with the newest served list.
+
+Tests: [`model-recommendations-refresh.test.ts`](../packages/config/src/__tests__/model-recommendations-refresh.test.ts) uses an in-memory cache, a scripted `fetch` and a fixed clock; [`model-recommendations-cache-io.test.ts`](../packages/config/src/__tests__/model-recommendations-cache-io.test.ts) is the one test on a real disk, pinning that `mv` keeps the inode and that `mkdir` is exclusive.
 
 ---
 
@@ -404,6 +454,7 @@ import {
   GLOBAL_CONFIG_DIR_ENV, // "WEAVE_GLOBAL_CONFIG_DIR"
   mergeConfigs, // Merge only
   resolvePromptPaths, // Path resolution only
+  ModelRecommendations, // Fetch, cache, apply and status for model recommendations
 } from "@weaveio/weave-config";
 ```
 

@@ -50,12 +50,12 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [x] 3.6 The Claude Code adapter accepts `opus`, `sonnet` and `haiku` as `models` entries and writes them through unchanged.
 - [x] 3.7 [Config Loading](../../config-loading.md) describes the fourth layer; [Model Resolution](../../model-resolution.md#builtin-default-models) says how recommendations combine with the builtin defaults. Also [Claude Code](../../adapters/claude-code.md#models) (tier entries) and [OpenCode 2 core](../../adapters/opencode2-core.md#model-recommendations).
 
-## 4. Fetch and cache — PR:
+## 4. Fetch and cache — PR: #288
 
-- [ ] 4.1 `ModelRecommendations` class with injected `fetch`, clock and file access; `refresh({ force })` returns `ResultAsync` with a typed error.
-- [ ] 4.2 24-hour throttle per channel after success and 1-hour after failure, `If-None-Match`/ETag, 5-second timeout, 64 KiB body cap, no identifying headers. `WEAVE_MODEL_RECOMMENDATIONS_URL` overrides the base URL.
-- [ ] 4.3 `latest` and `applied` are envelope files written to a unique temporary name and moved into place with Bun Shell `mv` (test pins the rename); writers hold the `lock/` directory (Bun Shell `mkdir`, 60-second stale timeout) and re-check `issued` under the lock. `latest` written only after verification; `auto` promotes to `applied` only when `issued` is later; `notify` holds. Rollback (older `issued`) and replay (same `issued`) leave `applied` unchanged.
-- [ ] 4.4 Every failure path leaves both files unchanged and records an error code in `state.json`, under the lock. Lock contention returns `Busy` and writes nothing, `state.json` included. No test touches the network.
+- [x] 4.1 `ModelRecommendations` class with injected `fetch`, clock and file access; `refresh({ force })` returns `ResultAsync` with a typed error.
+- [x] 4.2 24-hour throttle per channel after success and 1-hour after failure, `If-None-Match`/ETag, 5-second timeout, 64 KiB body cap, no identifying headers. `WEAVE_MODEL_RECOMMENDATIONS_URL` overrides the base URL.
+- [x] 4.3 `latest` and `applied` are envelope files written to a unique temporary name and moved into place with Bun Shell `mv` (test pins the rename); writers hold the `lock/` directory (Bun Shell `mkdir`, 60-second stale timeout) and re-check `issued` under the lock. `latest` written only after verification; `auto` promotes to `applied` only when `issued` is later; `notify` holds. Rollback (older `issued`) and replay (same `issued`) leave `applied` unchanged.
+- [x] 4.4 Every failure path leaves both files unchanged and records an error code in `state.json`, under the lock. Lock contention returns `Busy` and writes nothing, `state.json` included. No test touches the network. Also in #288: an opted-in channel with no `applied.json` yet is a `ModelRecommendationsPending` diagnostic, not a skipped layer, so OpenCode 2 raises `model_updates_unavailable` only for a present-but-unusable file.
 
 ## 5. CLI — PR:
 

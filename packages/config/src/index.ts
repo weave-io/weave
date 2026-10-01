@@ -63,7 +63,43 @@ export {
   modelRecommendationsCachePaths,
   resolveModelUpdates,
 } from "./model-recommendations-cache.js";
+export type {
+  CacheIoError,
+  ModelRecommendationsFiles,
+  ModelRecommendationsShell,
+} from "./model-recommendations-cache-io.js";
+export {
+  BunModelRecommendationsFiles,
+  BunModelRecommendationsShell,
+} from "./model-recommendations-cache-io.js";
 export { MODEL_RECOMMENDATIONS_PUBLIC_KEYS } from "./model-recommendations-keys.js";
+export type {
+  AppliedListState,
+  ApplyError,
+  ApplyOutcome,
+  ModelRecommendationsDeps,
+  ModelRecommendationsFetch,
+  ModelRecommendationsListSummary,
+  ModelRecommendationsRequest,
+  ModelRecommendationsStatus,
+  PromotedList,
+  RecordedRefreshError,
+  RefreshError,
+  RefreshFailure,
+  RefreshOutcome,
+  RefreshRequest,
+  UnexpectedFailure,
+} from "./model-recommendations-refresh.js";
+export {
+  DEFAULT_MODEL_RECOMMENDATIONS_BASE_URL,
+  describeRefreshFailure,
+  MODEL_RECOMMENDATIONS_CHECK_INTERVAL_MS,
+  MODEL_RECOMMENDATIONS_FETCH_TIMEOUT_MS,
+  MODEL_RECOMMENDATIONS_LOCK_STALE_MS,
+  MODEL_RECOMMENDATIONS_RETRY_INTERVAL_MS,
+  MODEL_RECOMMENDATIONS_URL_ENV,
+  ModelRecommendations,
+} from "./model-recommendations-refresh.js";
 export type {
   ModelRecommendationsFreshnessContext,
   ModelRecommendationsSignError,

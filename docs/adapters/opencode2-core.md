@@ -260,11 +260,17 @@ later promotion changes the revision and rebuilds the catalog like any other
 source edit. Without an opt-in the file is never read and the manifest is
 unchanged.
 
-An applied file that cannot be used (missing, unreadable, unsigned, expired,
-or otherwise invalid) is skipped: the catalog still publishes, every builtin
-runs on its builtin list, and `status` carries one `model_updates_unavailable`
-issue until a usable file is applied. Fetching, the `modelUpdates` status
-object and the TUI notice are [Spec 39](../specs/39-spec-model-recommendations/39-spec-model-recommendations.md)
+Until a list is applied there is no `applied.json`: every builtin runs on its
+builtin list and there is no issue, because nothing has been fetched yet (the
+loader reports `ModelRecommendationsPending`). An applied file that is there
+but cannot be used (unreadable, unsigned, expired, or otherwise invalid), or
+whose existence could not be checked, is skipped: the catalog still publishes,
+every builtin runs on its builtin list, and `status` carries one
+`model_updates_unavailable` issue until a usable file is applied. The cache is
+filled by `ModelRecommendations` in `@weaveio/weave-config`
+([Config Loading](../config-loading.md#fetching-and-the-cache)); calling its
+`refresh()` from the plugin, the `modelUpdates` status object and the TUI
+notice are [Spec 39](../specs/39-spec-model-recommendations/39-spec-model-recommendations.md)
 item 6.
 
 The adapter does not redirect the shared process logger to a Location-specific

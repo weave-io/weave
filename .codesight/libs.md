@@ -776,6 +776,12 @@
   - function mergeConfigs: (...configs) => WeaveConfig
   - type WorkflowExtensionError
   - type MergeError
+- `packages/config/src/model-recommendations-cache-io.ts`
+  - class BunModelRecommendationsFiles
+  - class BunModelRecommendationsShell
+  - interface CacheIoError
+  - interface ModelRecommendationsFiles
+  - interface ModelRecommendationsShell
 - `packages/config/src/model-recommendations-cache.ts`
   - function modelRecommendationsCachePaths: (channel, globalDir) => void
   - function resolveModelUpdates: (settings) => ResolvedModelUpdates | undefined
@@ -788,6 +794,14 @@
   - interface ModelRecommendationsLayerDeps
   - interface ModelRecommendationsLayerRequest
   - interface ModelRecommendationsLayerResult
+- `packages/config/src/model-recommendations-refresh.ts`
+  - function describeRefreshFailure: (failure) => string
+  - class ModelRecommendations
+  - interface ModelRecommendationsDeps
+  - interface ModelRecommendationsRequest
+  - interface RefreshRequest
+  - interface PromotedList
+  - _...17 more_
 - `packages/config/src/model-recommendations-verifier.ts`
   - function decodeBase64: (value) => Result<Uint8Array<ArrayBuffer>, string>
   - function encodeBase64: (bytes) => string
