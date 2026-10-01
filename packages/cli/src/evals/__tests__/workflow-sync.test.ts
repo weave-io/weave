@@ -407,6 +407,22 @@ describe("workflow-sync — agent-evals.yml trajectory-track allowlists match ha
     expect(workflowText).toContain("harness_trajectory");
   });
 
+  it("ALLOWED_TRAJECTORY_MODELS fills a case that omits allowed_models from the matrix", async () => {
+    const workflowText = await Bun.file(WORKFLOW_PATH).text();
+    const line = workflowText
+      .split("\n")
+      .find((l) => /^\s*ALLOWED_TRAJECTORY_MODELS=/.test(l));
+    expect(line).toBeDefined();
+
+    // Most trajectory cases omit `allowed_models` so they follow the matrix
+    // (Spec 39 task 0.4). The workflow must fill them the way the case loader
+    // does — default and dev models — or a dispatch naming a default model
+    // would skip the trajectory job those cases would have run.
+    expect(line).toContain("evals/model-matrix.json");
+    expect(line).toContain(".allowed_models //");
+    expect(line).toContain("select(.default == true or .dev == true)");
+  });
+
   it("ALLOWED_SANDBOX_PROFILES lists every sandbox profile referenced by a harness_trajectory case", async () => {
     const workflowText = await Bun.file(WORKFLOW_PATH).text();
     const workflowProfiles =

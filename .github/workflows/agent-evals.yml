@@ -363,11 +363,13 @@ jobs:
           # short agent names of the suites that can hold them (the registry
           # entries allowing harness_trajectory). workflow-sync.test.ts enforces
           # both. ALLOWED_TRAJECTORY_MODELS is the union of those cases'
-          # allowed_models, read from the fixtures rather than restated.
+          # allowed_models, read from the fixtures rather than restated. A
+          # case that omits the field runs on the matrix's default and dev
+          # models, as the case loader fills it.
           # ---------------------------------------------------------------------------
           ALLOWED_TRAJECTORY_CASES="loom-route-shuttle-implement-utility-trajectory loom-delegates-backend-fix-to-category-trajectory loom-runs-the-failing-check-itself-trajectory shuttle-verify-tests-after-edit-trajectory tapestry-runs-plan-verification-trajectory tapestry-dispatches-independent-tasks-in-parallel-trajectory"
           ALLOWED_TRAJECTORY_AGENTS="loom tapestry shuttle loom-routing tapestry-execution shuttle-execution"
-          ALLOWED_TRAJECTORY_MODELS="$(jq -rs '[.[] | select(.expected_outcome.kind=="harness_trajectory") | .allowed_models[]?] | unique | .[]' evals/cases/*/*.json | tr '\n' ' ')"
+          ALLOWED_TRAJECTORY_MODELS="$(jq -rs --slurpfile matrix evals/model-matrix.json '[.[] | select(.expected_outcome.kind=="harness_trajectory") | (.allowed_models // [$matrix[0].models[] | select(.default == true or .dev == true) | .id])[]] | unique | .[]' evals/cases/*/*.json | tr '\n' ' ')"
           if [ -z "${ALLOWED_TRAJECTORY_MODELS// /}" ]; then
             echo "::error::Could not derive trajectory model allowlist from evals/cases"
             exit 1

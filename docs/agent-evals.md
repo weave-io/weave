@@ -147,17 +147,53 @@ Everything else derives from it:
 | --- | --- |
 | Case fixtures | `allowed_models` is omitted, and the loader fills it with every `default: true` or `dev: true` entry |
 | `agent-evals.yml` dispatch allowlist | `jq -r '.models[].id' evals/model-matrix.json` at run time |
-| Trajectory model allowlist | the union of `allowed_models` across `harness_trajectory` cases, computed with `jq` |
+| Trajectory cases | five omit `allowed_models` like any other case; the Phase 1 case lists every default model plus `openai/gpt-4o-mini` (see [Trajectory cases run on every default model](#trajectory-cases-run-on-every-default-model)) |
+| Trajectory model allowlist | the union of `allowed_models` across `harness_trajectory` cases, an omitted list read as the default and dev models, computed with `jq` |
 
 Before this, a model had to be listed in 46 case fixtures plus two workflow
 variables plus the dispatch input description — around 50 edits, each of which
 silently degraded coverage if missed.
 
 **Declaring `allowed_models` explicitly** is for deliberate exceptions only: a
-trajectory case pinned to one cheap model, for instance. A list that merely
+case that also runs on a model outside the default matrix, for instance. A list that merely
 restates the matrix defaults is **rejected at load time**, because it would
 silently stop tracking the matrix — the case would keep running the old set
 while every other case picked the new model up.
+
+### Trajectory cases run on every default model
+
+Every `harness_trajectory` case's `allowed_models` includes every `default: true`
+model in `evals/model-matrix.json` (Spec 39 task 0.4, gap G4 in the
+[eval readiness record](artifacts/eval-readiness-model-recommendations.md)). A
+candidate model is evaluated only after it is added to the matrix as
+`default: true`, and this rule is what then lets it run on real harness
+sessions, not only on the text cases. The test
+`the real trajectory cases and the default matrix` in
+[`model-matrix.test.ts`](../packages/cli/src/evals/__tests__/model-matrix.test.ts)
+enforces it over the real case files and matrix.
+
+- Five trajectory cases omit `allowed_models`, so they run on the default and
+  dev models and follow the matrix with no edit. They used to pin
+  `anthropic/claude-sonnet-4.5`, `anthropic/claude-opus-5`, `openai/gpt-5.5`
+  and `deepseek/deepseek-v4-flash-0731`, a subset of the default matrix with no
+  recorded reason beyond keeping trajectory runs small; none of the models the
+  builtins now name could run them.
+- The Phase 1 case `loom-route-shuttle-implement-utility-trajectory` keeps
+  `openai/gpt-4o-mini` (`default: false`, tagged `trajectory-only`), the cheap
+  model it was built on and that `bun run eval:trajectory` runs, so its list is
+  every default model plus that one. It must list them explicitly, which means
+  adding a default model needs a second edit here: the test fails and names the
+  case and the missing model until you add it.
+- A case that genuinely cannot run on some default model goes in
+  `TRAJECTORY_DEFAULT_MODEL_EXCEPTIONS` in that test, with the reason. There
+  are none today.
+
+Trajectory sessions cost more than text answers (15 attempts cost $3.41 on
+24 Sep 2026) and take up to their `max_duration_seconds` each, so the size of a
+trajectory run is chosen when it is started, not by the case lists: use
+`--models dev` (12 sessions per repeat today), `--model <id>`, `--case <id>`, or
+untick the workflow's `trajectory` input. A plain `--track trajectory` run is
+every case on every default model (84 sessions per repeat today).
 
 `TRAJECTORY_MODEL` in the workflow stays a literal: it chooses which cheap model
 CI runs by default, which is a policy decision rather than an allowlist.
@@ -185,8 +221,9 @@ bun packages/cli/src/main.ts eval run --agent pattern --models dev
   `dev`, so the subset cannot quietly grow expensive.
 - A case that omits `allowed_models` runs on the default set **and** the dev
   subset, so `--models dev` reaches every ordinary case without editing it. A
-  case that pins `allowed_models` (the trajectory cases) keeps exactly its own
-  list; a dev run that selects only such cases fails with `NoCasesFound`.
+  case that pins `allowed_models` keeps exactly its own list; a dev run that
+  selects only such cases fails with `NoCasesFound`. Every trajectory case
+  runs on the dev subset today, because both dev models are also defaults.
 - `--models dev` cannot be combined with `--model <id>`; `--model` already
   names the one model to run. `--models default` alongside `--model` is
   accepted, because that is what the workflow dispatch form sends.
@@ -203,7 +240,7 @@ tokens in/out):**
 | Model | Price | Why |
 | --- | --- | --- |
 | `deepseek/deepseek-v4-flash-0731` | $0.04 / $0.64 | Already in the default matrix, so a dev-run result for it is directly comparable with the full run. Cheapest tool-capable model in the matrix. |
-| `openai/gpt-6-luna` | $0.10 / $0.50 | The inexpensive tier of the GPT-6 generation the default matrix tests through `openai/gpt-6-astra` ($10 / $50), and a second vendor so one provider's quirks do not dominate what a dev run shows. `default: false`, so it never enters a baseline. |
+| `openai/gpt-6-luna` | $0.10 / $0.50 | The inexpensive tier of the GPT-6 generation the default matrix tests through `openai/gpt-6-astra` ($10 / $50), and a second vendor so one provider's quirks do not dominate what a dev run shows. In the default matrix too since #250, because the builtins name it. |
 
 For comparison the default matrix's Claude and GPT entries cost $2–10 per
 million input tokens and $10–50 per million output tokens. The judge costs
@@ -887,7 +924,7 @@ The workflow at `.github/workflows/agent-evals.yml` is manual-only (`workflow_di
 The workflow runs two eval jobs, one per [track](#run-one-track---track):
 
 - **`run-evals`** runs `weave eval run --track text`: every text-only case the filters select.
-- **`trajectory-evals`** builds the Podman sandbox image and runs `weave eval run --track trajectory`: every `harness_trajectory` case the filters select, each on the selected models its `allowed_models` permits. It runs on every dispatch (Spec 37, 20.2); until then it skipped itself unless trajectory-relevant paths had changed since the default branch, which a dispatch from `main` never has. A default dispatch therefore also runs the Spec 35 trajectory cases on their default-matrix models, one sandboxed session each (up to its `max_duration_seconds`), times `repeat`. The Phase 1 case `loom-route-shuttle-implement-utility-trajectory` allows only `openai/gpt-4o-mini`, which is outside the default matrix, so it runs only when that model is dispatched (`-f model=openai/gpt-4o-mini`) or locally with `bun run eval:trajectory`.
+- **`trajectory-evals`** builds the Podman sandbox image and runs `weave eval run --track trajectory`: every `harness_trajectory` case the filters select, each on the selected models its `allowed_models` permits. It runs on every dispatch (Spec 37, 20.2); until then it skipped itself unless trajectory-relevant paths had changed since the default branch, which a dispatch from `main` never has. A default dispatch therefore also runs all six trajectory cases on every default model, one sandboxed session each (up to its `max_duration_seconds`), times `repeat`: 84 sessions per repeat with today's 14 default models (see [Trajectory cases run on every default model](#trajectory-cases-run-on-every-default-model)). Dispatch `-f models=dev`, a `model`, or untick `trajectory` for a smaller run. The Phase 1 case `loom-route-shuttle-implement-utility-trajectory` also allows `openai/gpt-4o-mini`, which is outside the default matrix, so that model runs only when it is dispatched (`-f model=openai/gpt-4o-mini`) or locally with `bun run eval:trajectory`.
 
 A job whose track the filters exclude is skipped, not failed: a `case` filter runs only the job of that case's track; the text job is skipped when `model` names a model no text-only case allows (for example `openai/gpt-4o-mini`); the trajectory job is skipped when `agent` names a suite that cannot hold trajectory cases (`ALLOWED_TRAJECTORY_AGENTS`) or `model` names a model no trajectory case allows. The trajectory job starts after the text job finishes, whatever its outcome, never beside it: both publish, and a run ID (`<sha7>-<date>-<NNN>`) is allocated by reading the published manifest, so two concurrent publications could pick the same ID.
 
@@ -1728,7 +1765,7 @@ A suite in that state **fails; it is never reported green**:
 - Nothing is written for the empty suite. When no selected suite ran a case, no bundle is written, no dashboard index is updated and nothing is published.
 - `ArtifactBundleWriter.writeBundle()` refuses a run whose `totalCases` is 0 with a typed `EmptyRun` error, before it writes, indexes or publishes anything. This is a second guard: whoever calls the writer, an empty run cannot be published.
 
-The check is per suite, across the whole run, because a runner is called once per model and can only see one model at a time. A model outside a case's `allowed_models` is not a failure when another model in the run executes the case, which happens with trajectory cases that allow only part of the matrix. A `(suite, model)` pair that ran nothing is left out of the run summary, so it does not show up as a green rollup of zero cases.
+The check is per suite, across the whole run, because a runner is called once per model and can only see one model at a time. A model outside a case's `allowed_models` is not a failure when another model in the run executes the case, which happens when a case allows only part of the matrix. A `(suite, model)` pair that ran nothing is left out of the run summary, so it does not show up as a green rollup of zero cases.
 
 Before #205 was fixed, `loom-routing` and `tapestry-execution` published an empty run in this situation: `totalCases: 0`, `suiteGreen: true`, exit 0, and updated dashboard indexes, so a `--model` typo looked like a passing run in CI. The other six suites each had their own guard. Those six guards have been removed. The orchestrator check replaces them and treats all eight suites the same way. The scenarios in `tests/evals/suite-runners.scenario.test.ts` (under "a maintainer narrows the run to one case or one model") and in `tests/cli/command-seams.scenario.test.ts` cover this behaviour.
 

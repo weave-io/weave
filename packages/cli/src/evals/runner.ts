@@ -1273,9 +1273,10 @@ export class EvalOrchestrator {
    * The trajectory track (`--track trajectory`) with no agent or case filter
    * runs every trajectory case the selected models may run. A suite whose
    * trajectory cases allow none of those models is then legitimately empty,
-   * the same way a model outside every case's `allowed_models` is: the loom
-   * trajectory case that runs only on `openai/gpt-4o-mini` must not fail a
-   * default-matrix dispatch. The run still fails when no suite ran anything,
+   * the same way a model outside every case's `allowed_models` is: a
+   * dispatch of the trajectory-only `openai/gpt-4o-mini`, which only the loom
+   * Phase 1 case allows, must not fail the shuttle and tapestry suites. The
+   * run still fails when no suite ran anything,
    * and an explicit agent or case filter keeps the strict rule.
    */
   private toleratesEmptySuites(

@@ -107,7 +107,7 @@ TMPDIR=~/.cache/weave-trajectory-tmp \
   bun packages/cli/src/main.ts eval run --track trajectory --models dev --raw-artifacts
 ```
 
-`--track text` runs only the text cases. On the dev subset, five of the six trajectory cases run on DeepSeek V4 Flash. `openai/gpt-6-luna` is in none of their `allowed_models`, and the Phase 1 case runs only on `openai/gpt-4o-mini`. Each session can take up to its `max_duration_seconds` (5 to 9 minutes). See [Run one track](agent-evals.md#run-one-track---track).
+`--track text` runs only the text cases. Every trajectory case runs on every default model, so on the dev subset all six run on both dev models, 12 sessions per repeat. Each session can take up to its `max_duration_seconds` (5 to 9 minutes). See [Run one track](agent-evals.md#run-one-track---track).
 
 **6. Dispatch the CI workflow.** The workflow is manual only, and every dispatch publishes its results:
 
@@ -119,8 +119,8 @@ The inputs are `agent`, `model`, `models` (`default` or `dev`), `case`, `repeat`
 
 **Cost and time.**
 - A live run of 16 answers on the dev subset, one case per judged suite with Jev judging, cost about $0.012 on 24 Sep 2026.
-- `--models dev --repeat 3` on the text track: about $0.18 and 1 h 40 min as one process (276 attempts, 24 Sep 2026). The dev trajectory cases add about 5 min and $0.04.
-- The full default matrix, once: about $6.92 for the text track and $3.41 more for the trajectory cases on the models they allow. Run one process per suite and model in parallel, it took about 30 min (24 Sep 2026). See the [baseline](artifacts/eval-baseline-2026-09-24.md).
+- `--models dev --repeat 3` on the text track: about $0.18 and 1 h 40 min as one process (276 attempts, 24 Sep 2026). The dev trajectory cases added about 5 min and $0.04 when only five sessions ran on DeepSeek; they are now 12 sessions per repeat, on both dev models.
+- The full default matrix, once: about $6.92 for the text track and $3.41 more for the 15 trajectory sessions the cases then allowed. The trajectory cases now run on every default model (84 sessions per repeat), so expect several times that. Run one process per suite and model in parallel, it took about 30 min (24 Sep 2026). See the [baseline](artifacts/eval-baseline-2026-09-24.md).
 - Check your OpenRouter credits before a large run.
 
 ## Reading results
@@ -134,7 +134,7 @@ The inputs are `agent`, `model`, `models` (`default` or `dev`), `case`, `repeat`
 
 ## Adding a case or a model
 
-- **A model** takes one edit: add an entry to `evals/model-matrix.json`. Every case that omits `allowed_models`, and the CI dispatch allowlist, follow the matrix automatically. The trajectory cases are the exception: they pin their own `allowed_models`, so a new model runs on them only if you add it to each case that should run it. The trajectory job's allowlist follows those lists. See [Adding a model](agent-evals.md#adding-a-model).
+- **A model** takes one edit: add an entry to `evals/model-matrix.json`. Every case that omits `allowed_models`, and the CI dispatch allowlist, follow the matrix automatically. Every trajectory case must allow every `default: true` model, and a test enforces it, so a new default model runs on them too. Five omit `allowed_models`; the Phase 1 case lists the defaults plus `openai/gpt-4o-mini`, so add a new default model to its list as well (the test names it). A candidate model must be a default before it is evaluated. See [Trajectory cases run on every default model](agent-evals.md#trajectory-cases-run-on-every-default-model). See [Adding a model](agent-evals.md#adding-a-model).
 - **A text case** needs a case JSON and a rubric JSON with the same id in one of the eight suites. It should assert only what is visible in the answer. Then run `bun test ./packages/cli/src/evals/__tests__` and `eval run --case <id> --dry-run`. The CI dispatch allowlist lists every case id, and `workflow-sync.test.ts` fails until you add the new one. See [Adding a New Case](../evals/README.md#adding-a-new-case).
 - **A trajectory case** also needs a fixture under `evals/fixtures/`, and optionally a verifier. See [Verification-aware trajectory cases](agent-evals.md#verification-aware-trajectory-cases-spec-35) and [Spec 35](specs/35-spec-verification-trajectory-evals/35-spec-verification-trajectory-evals.md).
 
