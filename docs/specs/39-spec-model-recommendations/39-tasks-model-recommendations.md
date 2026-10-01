@@ -81,7 +81,7 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 ## 7. Website (`pgermishuys/weave-website`) — PR:
 
 - [ ] 7.1 `public/models/stable.v1.json` and `next.v1.json`, initially repeating today's builtin lists.
-- [ ] 7.2 Deploy workflow: `weave models check --expect` each list (schema, freshness, catalog resolution against the `.expect.json`, `evidence` present), wait for approval in the `model-recommendations` environment, sign, and publish the envelopes; fail the deploy on any error.
+- [ ] 7.2 Deploy workflow: verify each committed envelope (payload equals the list beside it; `weave models check --envelope --expect`: signature, schema, freshness, catalog resolution, `evidence` present); fail the deploy on any error. Signing is offline with `scripts/models/sign.ts`; no key in CI.
 - [ ] 7.3 nginx: `/models/` served as `application/json`, `Cache-Control: public, max-age=300`, ETag.
 - [ ] 7.4 User docs page: how to opt in, the commands, channels, what the request sends.
 

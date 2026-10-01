@@ -110,10 +110,10 @@ Entries in `default` follow the same spelling rules as the builtins ([why bare I
 
 - The signature is Ed25519 over the exact UTF-8 bytes of the envelope's `payload`, base64-encoded in its `sig` field.
 - The public keys live in `@weaveio/weave-config` as a list, so a key can be rotated by shipping the new key in a release before the site starts signing with it.
-- The private key is a secret of a GitHub Environment, `model-recommendations`, in the website repository. The environment allows only the `main` branch and requires a maintainer's approval for every job that uses it. The deploy workflow validates the list, waits for that approval, signs it, and fails the deploy if any step fails. Each publish is therefore a deliberate, reviewed act, which is what makes `auto` acceptable.
+- Signing happens offline. The private key stays on a maintainer's machine and never reaches GitHub, CI or the website. The maintainer checks the list with `weave models check --expect`, signs it with `scripts/models/sign.ts`, and commits the signed envelope to the website repository. The deploy workflow only verifies: it re-runs the check on the envelope (signature, freshness, expectations) and fails the deploy on any error. Each publish is therefore a deliberate act by whoever holds the key, which is what makes `auto` acceptable. (An earlier draft kept the key in a GitHub Environment with required reviewers; GitHub does not offer that rule for this private repository on its current plan, and offline signing is the stronger boundary anyway.)
 - The client verifies with WebCrypto (`crypto.subtle`, Ed25519) in Bun. No new dependency.
 
-**Why sign a file we host ourselves.** The file decides which model, and so which provider bill, every opted-in user's agents run on. The signature protects against a compromised host, CDN or nginx config, and against repository changes that a maintainer did not approve in the environment: a modified workflow still cannot reach the key without that approval. It does not protect against a compromised maintainer account; rotating the key in a release is the recovery. The schema limits a bad list to model choice, and `expires` limits how long an old one can be replayed.
+**Why sign a file we host ourselves.** The file decides which model, and so which provider bill, every opted-in user's agents run on. The signature protects against a compromised host, CDN or nginx config, and against a compromised website repository or CI: none of them hold the key, so the most they can do is serve an older signed list, which rollback protection and `expires` bound. It does not protect against a stolen maintainer key; rotating the key in a release is the recovery. The schema limits a bad list to model choice, and `expires` limits how long an old one can be replayed.
 
 ## Client behaviour
 
@@ -205,7 +205,7 @@ An agent that cannot clear the bar keeps its builtin list. Its models change onl
 
 ## Website
 
-- `models/stable.json` and `models/next.json` hold the lists, with their `.expect.json` files beside them. The deploy workflow builds the signed envelopes and publishes them as `public/models/stable.v1.json` and `public/models/next.v1.json`.
+- `models/stable.json` and `models/next.json` hold the lists, with their `.expect.json` files beside them. The maintainer commits the signed envelopes as `public/models/stable.v1.json` and `public/models/next.v1.json`; the deploy workflow verifies that each envelope's payload is byte-for-byte the list beside it and passes `weave models check --envelope --expect`.
 - The workflow validates each list with `weave models check <file> --expect <expect-file>` (a CLI subcommand using the same schema as the client) before signing, so the site and the client cannot disagree about what is valid. The check also resolves every section against the provider catalog fixtures ([publication bar](#publication-bar), step 6), rejects a list whose `issued` is not later than the one currently served, and fails on a missing `evidence` link.
 - nginx serves `/models/` as `application/json` with `Cache-Control: public, max-age=300` and an ETag.
 - A user docs page on tryweave.io explains the setting, the commands, and what data the request sends (none beyond the HTTP request itself).
@@ -233,7 +233,7 @@ One pull request per item, tests first, in this order. Tasks are in the [tasks f
 | 5 | **CLI** | `weave models status`, `update`, `apply`, `pin` and `check`, and the `weave validate` reporting, documented in [CLI](../../cli.md). |
 | 6 | **OpenCode 2** | Background refresh after first publish and on admitted work; a test that `applied.json` is a probed source (no new plumbing: the [spike](../../artifacts/model-recommendations-spike.md) showed the loader's `FileReader` is enough); `status` fields and issue code; TUI notice. An adapter scenario in `tests/adapters/` shows a promoted file reaching a reloaded agent without restart. |
 | 6b | **Claude Code and Pi** | A background `refresh()` at session start, composition with the harness's section, and tests with a stub fetch showing one refresh per session start when opted in and none when off. |
-| 7 | **Website** | Files, signing in the deploy workflow, nginx headers, user docs page. Opened against `pgermishuys/weave-website`. |
+| 7 | **Website** | Lists, expectations and offline-signed envelopes; verification in the deploy workflow; nginx headers; user docs page. Opened against `pgermishuys/weave-website`. |
 | 8 | **Live proof** | On a real OpenCode 2 host with `mode auto`, pointed at a locally served signed file: an agent's model changes after promotion with no restart, a tampered remote file is rejected with the old model kept, and a corrupt local file is reported with `model_updates_unavailable` while agents run on their builtin lists. Recorded under `docs/artifacts/`, as the [spike](../../artifacts/model-recommendations-spike.md) did for the first two. |
 
 ## Finish line
