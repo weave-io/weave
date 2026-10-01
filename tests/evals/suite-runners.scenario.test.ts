@@ -3335,6 +3335,12 @@ const TAPESTRY_ANSWERS: SignalRow[] = [
     true,
   ],
   [
+    "a bare agent handle with no task envelope",
+    "No re-delegation needed.\n@shuttle",
+    ["tapestry_task_redelegated"],
+    false,
+  ],
+  [
     "a completion when the case wanted a re-delegation",
     [
       "Evidence matches the claim: 2 pass, 0 fail.",

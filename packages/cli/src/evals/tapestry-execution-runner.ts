@@ -362,11 +362,12 @@ const MARKED_COMPLETE_RE =
   /\[x\]|\bmark(?:s|ed|ing)?\b[^.\n]{0,40}?\b(?:complete|completed|done)\b|\btask (?:is )?(?:complete|completed|done)\b|\bdone\s+1\/1\b|\b1\/1 done\b/gi;
 // Verb forms only: models discuss the noun ("no re-delegation needed") when
 // they decide against it, so "re-delegation" alone is not an action. A new
-// delegation envelope uses the bracketed `Task [1/1]:` form, or ends with
-// the line addressing it to an agent (`@shuttle`); a plain
-// "Task 1/1: mark complete" heading is not one.
+// delegation envelope uses the bracketed `Task [1/1]:` form, or the plain
+// `Task 1/1:` form followed later by a line addressing it to an agent
+// (`@shuttle`). A plain "Task 1/1: mark complete" heading alone is not one,
+// and neither is a bare `@shuttle` line.
 const REDELEGATED_RE =
-  /\bre-?delegat(?:e|es|ed|ing)\b|\bdelegat(?:e|es|ed|ing)\b[^.\n]{0,30}?\b(?:back|again)\b|\bsend(?:s|ing)?\b[^.\n]{0,20}?\bback\b|^\s*Task \[1\/1\]:|^\s*@[a-z][\w-]*\s*$/gim;
+  /\bre-?delegat(?:e|es|ed|ing)\b|\bdelegat(?:e|es|ed|ing)\b[^.\n]{0,30}?\b(?:back|again)\b|\bsend(?:s|ing)?\b[^.\n]{0,20}?\bback\b|^\s*Task \[1\/1\]:|^\s*Task \d+\/\d+:[^\n]*\n[\s\S]*?^\s*@[a-z][\w-]*\s*$/gim;
 // A mark the response puts off rather than makes: "before marking `[x]`",
 // "until it is marked done", "if the docs are there, mark it complete".
 // Tested against the text before the match on the same line.
