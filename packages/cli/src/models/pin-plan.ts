@@ -50,7 +50,7 @@ export interface PinPlan {
  */
 export function planPins(
   recommended: Readonly<Record<string, readonly string[]>>,
-  own: (agent: string) => readonly string[],
+  own: Readonly<Record<string, readonly string[]>>,
   includeQualified: boolean,
 ): PinPlan {
   const lists: Record<string, string[]> = {};
@@ -58,7 +58,7 @@ export function planPins(
   const unchanged: string[] = [];
   let changed = 0;
   for (const [agent, models] of Object.entries(recommended)) {
-    const mine = own(agent);
+    const mine = own[agent] ?? [];
     const extra = models.filter(
       (model) => isQualifiedModel(model) && !mine.includes(model),
     );
@@ -70,8 +70,13 @@ export function planPins(
       unchanged.push(agent);
       continue;
     }
-    lists[agent] = [...new Set([...mine, ...kept])];
-    if (lists[agent].length !== mine.length) changed++;
+    const list = [...new Set([...mine, ...kept])];
+    lists[agent] = list;
+    if (!sameList(list, mine)) changed++;
   }
   return { lists, changed, qualified, unchanged };
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((model, i) => model === b[i]);
 }

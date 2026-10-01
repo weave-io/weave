@@ -467,10 +467,14 @@ class ModelUpdatesCommand {
     const layers = await this.session.userLayers(this.projectRoot);
     if (layers.isErr()) return this.failWith(layers.error);
 
-    const global = layers.value.global;
+    const own = Object.fromEntries(
+      Object.entries(layers.value.global?.agents ?? {}).map(
+        ([agent, config]) => [agent, config.models ?? []],
+      ),
+    );
     const plan = planPins(
       recommended.agents,
-      (agent) => global?.agents[agent]?.models ?? [],
+      own,
       this.ctx.flags.modelsIncludeQualified === true,
     );
     const { changed } = plan;
@@ -480,9 +484,13 @@ class ModelUpdatesCommand {
       return this.fail([`Error: ${describePinEditError(edit.error)}`]);
     const notice = this.qualifiedNotice(plan);
     if (edit.value.hunks.length === 0) {
+      const leftOut =
+        notice.length > 0 && !this.ctx.flags.modelsIncludeQualified;
       this.out([
         ...notice,
-        `The global config already lists these models; nothing to pin (${path}).`,
+        leftOut
+          ? `Nothing else to pin; the global config was not changed (${path}).`
+          : `The global config already lists these models; nothing to pin (${path}).`,
         ...this.offHint(),
       ]);
       return ok(0);

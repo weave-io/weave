@@ -545,6 +545,37 @@ describe("a user pins the applied recommendations", () => {
       expect(written).not.toContain("agent thread");
     });
 
+    it("changes nothing, and says so, when every recommended entry is provider-qualified", async () => {
+      const machine = new Machine({ [GLOBAL_CONFIG]: ownConfig });
+      await machine.publish({
+        ...list(1, ["claude-opus-5.6"]),
+        harnesses: {
+          opencode2: {
+            agents: {
+              loom: { models: ["openrouter/anthropic/claude-opus-5.5"] },
+            },
+          },
+        },
+      });
+      await machine.weave(["models", "update"]);
+      await machine.weave(["models", "apply"]);
+
+      const { exitCode, stdout } = await machine.weave([
+        "models",
+        "pin",
+        "--yes",
+      ]);
+      expect(exitCode).toBe(0);
+      expect(stdout).toContain(
+        "loom keeps its existing models: all of its recommended entries are provider-qualified.",
+      );
+      expect(stdout).toContain(
+        `Nothing else to pin; the global config was not changed (${GLOBAL_CONFIG}).`,
+      );
+      expect(stdout).not.toContain("already lists these models");
+      expect(machine.file(GLOBAL_CONFIG)).toBe(ownConfig);
+    });
+
     it("keeps them with --include-qualified and warns", async () => {
       const machine = new Machine({ [GLOBAL_CONFIG]: ownConfig });
       await appliedQualified(machine);

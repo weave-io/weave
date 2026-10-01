@@ -760,7 +760,7 @@ The edited text is parsed again and compared with the original; if anything but 
 | `status` | The report was printed, including for `mode off` and for OpenCode V1 and Copilot CLI. | A usage error, or a config that does not load. |
 | `update` | The check succeeded: a list was applied, a newer list is waiting, or the recommendations are up to date. | Model updates are off, the harness takes no recommendations, the check failed (network, timeout, HTTP status, signature, schema, freshness), another process holds the cache lock, or the cache could not be written. |
 | `apply` | A list was applied, or there was nothing to apply. | Model updates are off, the harness takes no recommendations, the downloaded list no longer verifies (for example it expired), the lock is held, or the cache could not be written. |
-| `pin` | The global config was written, already held these models, or the user declined. | Model updates are off, nothing is applied, the applied list is unusable, the harness takes no recommendations, the global config does not parse or the edit could not be verified, no terminal to confirm without `--yes`, the file changed while the diff was shown, or the write failed. |
+| `pin` | The global config was written, already held these models, had nothing to pin once provider-qualified entries were left out, or the user declined. | Model updates are off, nothing is applied, the applied list is unusable, the harness takes no recommendations, the global config does not parse or the edit could not be verified, no terminal to confirm without `--yes`, the file changed while the diff was shown, or the write failed. |
 
 ## `weave models check`
 

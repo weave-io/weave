@@ -746,7 +746,7 @@
   - _...1 more_
 - `packages/cli/src/models/pin-plan.ts`
   - function isQualifiedModel: (model) => boolean
-  - function planPins: (recommended, readonly string[]>>, own) => void
+  - function planPins: (recommended, readonly string[]>>, own, readonly string[]>>, includeQualified) => PinPlan
   - interface QualifiedEntries
   - interface PinPlan
 - `packages/cli/src/models/recommendations-session.ts`
