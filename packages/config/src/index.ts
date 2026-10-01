@@ -88,6 +88,7 @@ export type {
   RefreshFailure,
   RefreshOutcome,
   RefreshRequest,
+  UnexpectedFailure,
 } from "./model-recommendations-refresh.js";
 export {
   DEFAULT_MODEL_RECOMMENDATIONS_BASE_URL,

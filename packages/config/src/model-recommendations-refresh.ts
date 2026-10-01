@@ -324,6 +324,13 @@ interface Checked {
   readonly etag?: string;
 }
 
+/** An injected dependency threw; a bug, reported rather than thrown. */
+export interface UnexpectedFailure {
+  readonly type: "Unexpected";
+  readonly channel: ModelUpdatesChannel;
+  readonly message: string;
+}
+
 /** Why a locked operation did not run, or did not finish. */
 type LockFailure =
   | { readonly type: "Busy"; readonly channel: ModelUpdatesChannel }
@@ -332,11 +339,7 @@ type LockFailure =
       readonly channel: ModelUpdatesChannel;
       readonly error: CacheIoError;
     }
-  | {
-      readonly type: "Unexpected";
-      readonly channel: ModelUpdatesChannel;
-      readonly message: string;
-    };
+  | UnexpectedFailure;
 
 /** A failure inside the lock: a check failure or a cache I/O failure. */
 type LockedFailure = RefreshFailure | CacheIoError;
@@ -487,15 +490,26 @@ export class ModelRecommendations {
     );
   }
 
-  /** A read-only snapshot of the channel's cache. Never fails and never writes. */
+  /**
+   * A read-only snapshot of the channel's cache. Never writes; an unreadable
+   * or invalid file is part of the snapshot, so the only error is an injected
+   * dependency that throws.
+   */
   status(
     request: ModelRecommendationsRequest,
-  ): ResultAsync<ModelRecommendationsStatus, never> {
+  ): ResultAsync<ModelRecommendationsStatus, UnexpectedFailure> {
     const mode = request.settings?.mode ?? "off";
     const channel = request.settings?.channel ?? DEFAULT_MODEL_UPDATES_CHANNEL;
     const paths = this.paths(channel);
-    const context = { channel, clientVersion: this.clientVersion };
+    return this.guard(() => this.snapshot(mode, channel, paths), channel);
+  }
 
+  private snapshot(
+    mode: ModelUpdatesMode,
+    channel: ModelUpdatesChannel,
+    paths: ModelRecommendationsCachePaths,
+  ): ResultAsync<ModelRecommendationsStatus, never> {
+    const context = { channel, clientVersion: this.clientVersion };
     return this.readState(paths).andThen((state) =>
       this.readVerified(paths.applied, context).andThen((applied) => {
         const appliedIssued =
@@ -545,19 +559,22 @@ export class ModelRecommendations {
         )
         .andThen((checked) => {
           const etag = checked.etag ?? state.etag;
+          // The check itself succeeded and its files are in place, so a
+          // state.json that cannot be written costs only the throttle: the
+          // next call checks again and finds the list it already holds.
           return this.writeState(paths, {
             version: 1,
             lastCheck: checkedAt,
             ...(etag === undefined ? {} : { etag }),
           })
-            .map(() => checked.outcome)
-            .mapErr(
-              (error): RefreshError => ({
-                type: "CacheFailed",
-                channel,
-                error,
-              }),
-            );
+            .orElse((error) => {
+              log.warn(
+                { channel, err: error },
+                "Could not record the model recommendations check",
+              );
+              return okAsync(undefined);
+            })
+            .map(() => checked.outcome);
         });
     });
   }
@@ -641,24 +658,22 @@ export class ModelRecommendations {
         appliedIssued: newest.file.issued,
       });
 
-    return this.writeAtomic(paths.latest, download.text).andThen(() => {
-      if (settings.mode !== "auto")
-        return okAsync<Checked, LockedFailure>({
-          outcome: { type: "Downloaded", channel, issued: file.issued },
-          etag: download.etag,
-        });
-      return this.writeAtomic(paths.applied, download.text).map(
-        (): Checked => ({
-          outcome: {
-            type: "Downloaded",
-            channel,
-            issued: file.issued,
-            promoted: this.promotion(file.issued, held.applied),
-          },
-          etag: download.etag,
-        }),
-      );
+    const outcome = (promoted?: PromotedList): Checked => ({
+      outcome: {
+        type: "Downloaded",
+        channel,
+        issued: file.issued,
+        ...(promoted === undefined ? {} : { promoted }),
+      },
+      etag: download.etag,
     });
+    if (settings.mode !== "auto")
+      return this.writeAtomic(paths.latest, download.text).map(() => outcome());
+    // Both files are staged before either is replaced.
+    return this.writeAtomicAll(
+      [paths.latest, paths.applied],
+      download.text,
+    ).map(() => outcome(this.promotion(file.issued, held.applied)));
   }
 
   /**
@@ -823,15 +838,15 @@ export class ModelRecommendations {
   private guard<T, E>(
     run: () => ResultAsync<T, E>,
     channel: ModelUpdatesChannel,
-  ): ResultAsync<T, E | LockFailure> {
+  ): ResultAsync<T, E | UnexpectedFailure> {
     // Calling `run` inside `then` catches a dependency that throws while the
     // chain is being built, not only one that rejects later.
     return new ResultAsync(
       Promise.resolve()
         .then(run)
         .then(
-          (settled): Result<T, E | LockFailure> => settled,
-          (cause: unknown): Result<T, E | LockFailure> => {
+          (settled): Result<T, E | UnexpectedFailure> => settled,
+          (cause: unknown): Result<T, E | UnexpectedFailure> => {
             log.error(
               { channel, err: cause },
               "Model recommendations failed unexpectedly",
@@ -1198,14 +1213,44 @@ export class ModelRecommendations {
     path: string,
     text: string,
   ): ResultAsync<void, CacheIoError> {
-    const temp = `${posix.dirname(path)}/.${posix.basename(path)}.${this.uniqueId()}.tmp`;
-    return this.files
-      .write(temp, text)
-      .andThen(() => this.shell.move(temp, path))
+    return this.writeAtomicAll([path], text);
+  }
+
+  /**
+   * Write `text` to every target the same way, staging all the temporary
+   * files before moving any into place, so a failed write (disk full,
+   * permissions) changes none of them. Only a failed rename, after every
+   * temporary file is on disk, can leave the earlier targets replaced.
+   */
+  private writeAtomicAll(
+    targets: readonly string[],
+    text: string,
+  ): ResultAsync<void, CacheIoError> {
+    const staged = targets.map((path) => ({
+      path,
+      temp: `${posix.dirname(path)}/.${posix.basename(path)}.${this.uniqueId()}.tmp`,
+    }));
+    const written = staged.reduce<ResultAsync<void, CacheIoError>>(
+      (chain, { temp }) => chain.andThen(() => this.files.write(temp, text)),
+      okAsync(undefined),
+    );
+    return written
+      .andThen(() =>
+        staged.reduce<ResultAsync<void, CacheIoError>>(
+          (chain, { temp, path }) =>
+            chain.andThen(() => this.shell.move(temp, path)),
+          okAsync(undefined),
+        ),
+      )
       .orElse((error) =>
-        this.shell
-          .remove(temp)
-          .orElse(() => okAsync(undefined))
+        staged
+          .reduce<ResultAsync<void, never>>(
+            (chain, { temp }) =>
+              chain.andThen(() =>
+                this.shell.remove(temp).orElse(() => okAsync(undefined)),
+              ),
+            okAsync(undefined),
+          )
           .andThen(() => errAsync(error)),
       );
   }

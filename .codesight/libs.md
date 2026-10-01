@@ -801,7 +801,7 @@
   - interface ModelRecommendationsRequest
   - interface RefreshRequest
   - interface PromotedList
-  - _...16 more_
+  - _...17 more_
 - `packages/config/src/model-recommendations-verifier.ts`
   - function decodeBase64: (value) => Result<Uint8Array<ArrayBuffer>, string>
   - function encodeBase64: (bytes) => string

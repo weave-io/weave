@@ -914,17 +914,45 @@ describe("refresh never throws", () => {
     });
   });
 
-  it("reports a state.json that cannot be written after a download as CacheFailed", async () => {
-    const h = harness(serve(await signed(list(2))));
+  it("keeps a successful download when only state.json cannot be written", async () => {
+    const envelope = await signed(list(2));
+    const h = harness(serve(envelope));
     h.cache.beforeMove = (from, to) => {
       if (to === PATHS.state) h.cache.files.delete(from);
     };
     const result = await h.models.refresh({ settings: AUTO });
+    expect(result._unsafeUnwrap().type).toBe("Downloaded");
+    expect(h.cache.text(PATHS.latest)).toBe(envelope);
+    expect(h.cache.text(PATHS.applied)).toBe(envelope);
+    expect(h.cache.text(PATHS.state)).toBeUndefined();
+    expect(h.cache.dirs.has(PATHS.lock)).toBe(false);
+  });
+
+  it("in auto mode, stages both files first: a failed applied write leaves latest unchanged too", async () => {
+    const applied = await signed(list(1));
+    const latest = await signed(list(1));
+    const h = harness(serve(await signed(list(2))));
+    h.cache.put(PATHS.applied, applied);
+    h.cache.put(PATHS.latest, latest);
+    const write = h.cache.write.bind(h.cache);
+    h.cache.write = (path, text) =>
+      path.startsWith(`${PATHS.dir}/.applied.json.`)
+        ? errAsync({
+            type: "CacheIoError",
+            operation: "write",
+            path,
+            message: "disk full",
+          })
+        : write(path, text);
+    const result = await h.models.refresh({ settings: AUTO });
     expect(result._unsafeUnwrapErr()).toMatchObject({
       type: "CacheFailed",
-      error: { operation: "move" },
+      error: { operation: "write", message: "disk full" },
     });
-    expect(h.cache.dirs.has(PATHS.lock)).toBe(false);
+    expect(h.cache.text(PATHS.latest)).toBe(latest);
+    expect(h.cache.text(PATHS.applied)).toBe(applied);
+    expect(h.cache.strays()).toEqual([]);
+    expect(h.cache.state()?.lastError).toMatchObject({ code: "CacheIoError" });
   });
 
   it("reports a temporary file that cannot be written, and leaves no stray", async () => {
@@ -1232,6 +1260,19 @@ describe("status", () => {
     expect(status.applied).toMatchObject({
       state: "unusable",
       reason: { type: "EnvelopeInvalid" },
+    });
+  });
+
+  it("turns a file access that throws into Unexpected", async () => {
+    const h = harness();
+    h.cache.exists = () => {
+      throw new Error("permission denied");
+    };
+    const result = await h.models.status({ settings: AUTO });
+    expect(result._unsafeUnwrapErr()).toEqual({
+      type: "Unexpected",
+      channel: "stable",
+      message: "permission denied",
     });
   });
 

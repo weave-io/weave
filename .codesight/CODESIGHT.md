@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 246 lib files | 30 env vars | 9 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~22,300 tokens. Without it, AI exploration would cost ~81,100 tokens. **Saves ~58,800 tokens per conversation.**
-> **Last scanned:** 2026-10-01 16:16 — re-run after significant changes
+> **Last scanned:** 2026-10-01 16:22 — re-run after significant changes
 
 ---
 
@@ -812,7 +812,7 @@
   - interface ModelRecommendationsRequest
   - interface RefreshRequest
   - interface PromotedList
-  - _...16 more_
+  - _...17 more_
 - `packages/config/src/model-recommendations-verifier.ts`
   - function decodeBase64: (value) => Result<Uint8Array<ArrayBuffer>, string>
   - function encodeBase64: (bytes) => string
