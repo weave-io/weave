@@ -1086,8 +1086,15 @@
   - function deriveProvenance: (gitSha, gitSourceReader) => ResultAsync<DerivedProvenance, VerifyEvalRunError[]>
   - class DefaultArtifactReader
   - _...25 more_
-- `scripts/models/keygen.ts` — function generateKeyPair: () => Promise<
-- `scripts/models/sign.ts` — function signList: (listText, privateKey, verifier) => void, type SignListError
+- `scripts/models/keygen.ts`
+  - function generateKeyPair: () => ResultAsync<KeyPair, KeygenError>
+  - function keygen: (args) => ResultAsync<string, KeygenError>
+  - interface KeyPair
+  - type KeygenError
+- `scripts/models/sign.ts`
+  - function signList: (listText, privateKey, verifier) => void
+  - function signFiles: (args) => ResultAsync<string, SignListError>
+  - type SignListError
 - `scripts/opencode2/fixtures/provider.ts`
   - class ProofProviderFixture
   - interface ProofProviderRequest

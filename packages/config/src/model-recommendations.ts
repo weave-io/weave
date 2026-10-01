@@ -65,8 +65,9 @@ export type ClaudeCodeModelTier = (typeof CLAUDE_CODE_MODEL_TIERS)[number];
 // ---------------------------------------------------------------------------
 
 const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+/** The SemVer 2.0.0 grammar (semver.org), build metadata included. */
 const SEMVER_PATTERN =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$/;
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/;
 
 /**
  * One `models` entry. A DSL `models` entry is any string; a published entry is

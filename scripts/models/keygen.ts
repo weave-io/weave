@@ -13,8 +13,22 @@
 
 import { logger } from "@weaveio/weave-engine";
 import { $ } from "bun";
+import { errAsync, ResultAsync } from "neverthrow";
 
 const log = logger.child({ module: "models-keygen" });
+
+/** Why no key pair was produced. */
+export type KeygenError =
+  | { readonly type: "Usage" }
+  | { readonly type: "Exists"; readonly path: string }
+  | { readonly type: "GenerateFailed" }
+  | { readonly type: "WriteFailed"; readonly path: string };
+
+/** A key pair, both halves base64. */
+export interface KeyPair {
+  readonly publicKey: string;
+  readonly privateKey: string;
+}
 
 function toBase64(buffer: ArrayBuffer): string {
   let binary = "";
@@ -23,11 +37,7 @@ function toBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-/** A fresh key pair, both halves base64. */
-export async function generateKeyPair(): Promise<{
-  publicKey: string;
-  privateKey: string;
-}> {
+async function exportPair(): Promise<KeyPair> {
   const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
     "sign",
     "verify",
@@ -40,27 +50,60 @@ export async function generateKeyPair(): Promise<{
   };
 }
 
-async function main(args: readonly string[]): Promise<number> {
+/** A fresh Ed25519 key pair. */
+export function generateKeyPair(): ResultAsync<KeyPair, KeygenError> {
+  return ResultAsync.fromThrowable(
+    exportPair,
+    (): KeygenError => ({ type: "GenerateFailed" }),
+  )();
+}
+
+async function writePrivateKey(
+  path: string,
+  privateKey: string,
+): Promise<void> {
+  await Bun.write(path, "");
+  await $`chmod 600 ${path}`.quiet();
+  await Bun.write(path, `${privateKey}\n`);
+}
+
+/** Run the script; resolves to the new public key instead of throwing. */
+export function keygen(
+  args: readonly string[],
+): ResultAsync<string, KeygenError> {
   const [outPath] = args;
-  if (outPath === undefined) {
-    log.error("Usage: bun scripts/models/keygen.ts <private-key-out>");
-    return 1;
-  }
-  if (await Bun.file(outPath).exists()) {
-    log.error({ path: outPath }, "Refusing to overwrite an existing key file");
-    return 1;
-  }
-  const keys = await generateKeyPair();
-  await Bun.write(outPath, "");
-  await $`chmod 600 ${outPath}`.quiet();
-  await Bun.write(outPath, `${keys.privateKey}\n`);
-  log.info(
-    { publicKey: keys.publicKey, privateKeyFile: outPath },
-    "Generated an Ed25519 key pair",
-  );
-  return 0;
+  if (outPath === undefined) return errAsync({ type: "Usage" });
+  return ResultAsync.fromThrowable(
+    () => Bun.file(outPath).exists(),
+    (): KeygenError => ({ type: "WriteFailed", path: outPath }),
+  )()
+    .andThen((exists) =>
+      exists
+        ? errAsync<KeyPair, KeygenError>({ type: "Exists", path: outPath })
+        : generateKeyPair(),
+    )
+    .andThen((keys) =>
+      ResultAsync.fromThrowable(
+        () => writePrivateKey(outPath, keys.privateKey),
+        (): KeygenError => ({ type: "WriteFailed", path: outPath }),
+      )().map(() => keys.publicKey),
+    );
 }
 
 if (import.meta.main) {
-  process.exitCode = await main(Bun.argv.slice(2));
+  const [outPath] = Bun.argv.slice(2);
+  const result = await keygen(Bun.argv.slice(2));
+  result.match(
+    (publicKey) =>
+      log.info(
+        { publicKey, privateKeyFile: outPath },
+        "Generated an Ed25519 key pair",
+      ),
+    (error) => {
+      if (error.type === "Usage")
+        log.error("Usage: bun scripts/models/keygen.ts <private-key-out>");
+      else log.error({ error }, "No key pair generated");
+      process.exitCode = 1;
+    },
+  );
 }

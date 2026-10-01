@@ -66,6 +66,30 @@ describe("ModelRecommendationsFileSchema", () => {
     expect(issuesFor(minimal)).toEqual([]);
   });
 
+  it.each([
+    "0.2.0",
+    "1.2.3-rc.1",
+    "1.2.3+build.7",
+    "1.2.3-0a.1+b",
+  ])("accepts the semver min_config_version %s", (version) => {
+    expect(issuesFor({ ...validList(), min_config_version: version })).toEqual(
+      [],
+    );
+  });
+
+  it.each([
+    "1.2",
+    "01.2.3",
+    "1.2.3-01",
+    "1.2.3-",
+    "1.2.3+",
+    "v1.2.3",
+  ])("rejects the non-semver min_config_version %s", (version) => {
+    expect(
+      issuesFor({ ...validList(), min_config_version: version }).join("\n"),
+    ).toContain("min_config_version");
+  });
+
   it("accepts both channels", () => {
     expect(issuesFor({ ...validList(), channel: "next" })).toEqual([]);
   });
