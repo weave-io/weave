@@ -60,14 +60,25 @@ const Plan = z
  * `unavailable` when `applied.json` is there but unusable (see the
  * `model_updates_unavailable` issue).
  */
-const ModelUpdates = z
-  .object({
-    mode: z.enum(["off", "notify", "auto"]),
-    channel: z.enum(["stable", "next"]),
-    state: z.enum(["off", "pending", "applied", "unavailable"]),
-    issued: z.string().min(1).max(64).optional(),
-  })
-  .strict();
+const ModelUpdatesBase = {
+  mode: z.enum(["off", "notify", "auto"]),
+  channel: z.enum(["stable", "next"]),
+};
+const ModelUpdates = z.discriminatedUnion("state", [
+  z
+    .object({
+      ...ModelUpdatesBase,
+      state: z.enum(["off", "pending", "unavailable"]),
+    })
+    .strict(),
+  z
+    .object({
+      ...ModelUpdatesBase,
+      state: z.literal("applied"),
+      issued: z.string().min(1).max(64),
+    })
+    .strict(),
+]);
 
 const ModelChange = z
   .object({
@@ -75,6 +86,7 @@ const ModelChange = z
     displayName: z.string().min(1).max(128).optional(),
     providerID: z.string().min(1).max(256),
     model: z.string().min(1).max(256),
+    variant: z.string().min(1).max(128).optional(),
   })
   .strict();
 

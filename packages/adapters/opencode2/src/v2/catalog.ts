@@ -89,6 +89,12 @@ export interface OpenCode2CatalogCandidate {
    * reports.
    */
   readonly modelUpdates: OpenCode2ModelUpdates;
+  /**
+   * The revision computed without the recommendations file: equal on two
+   * candidates when only `applied.json` differs between them, which is how a
+   * reload's model change is attributed to a newly applied list.
+   */
+  readonly baseRevision: string;
 }
 
 export interface BuildOpenCode2CatalogInput {
@@ -384,8 +390,16 @@ function buildCandidate(
             sortedHeld,
           );
           if (revision.isErr()) return err(revision.error);
+          const baseRevision = candidateRevision(
+            manifest.filter((source) => source.path !== recommendations?.path),
+            input.models,
+            input.skills,
+            sortedHeld,
+          );
+          if (baseRevision.isErr()) return err(baseRevision.error);
           return ok({
             revision: revision.value,
+            baseRevision: baseRevision.value,
             agents: projections,
             runtime,
             issues,

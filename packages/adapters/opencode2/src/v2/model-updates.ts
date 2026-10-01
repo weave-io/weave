@@ -32,6 +32,7 @@ import type {
 import { logger } from "@weaveio/weave-engine";
 import { Result, type ResultAsync } from "neverthrow";
 import type { OpenCode2CatalogCandidate } from "./catalog.js";
+import type { OpenCode2AgentProjection } from "./translate-agent.js";
 
 const log = logger.child({ module: "adapter-opencode/v2/model-updates" });
 
@@ -139,6 +140,12 @@ export class OpenCode2ModelUpdatesTrigger {
 /** Most agents one `models.changed` event names. */
 export const MAX_MODEL_CHANGE_AGENTS = 64;
 
+/** Bounds of the `models.changed` event's fields (see `rpc.ts`). */
+const MAX_AGENT_LENGTH = 128;
+const MAX_DISPLAY_NAME_LENGTH = 128;
+const MAX_MODEL_FIELD_LENGTH = 256;
+const MAX_VARIANT_LENGTH = 128;
+
 /** One agent whose resolved model a newly applied list changed. */
 export interface OpenCode2ModelChange {
   /** The agent id. */
@@ -147,6 +154,7 @@ export interface OpenCode2ModelChange {
   readonly providerID: string;
   /** The model id within `providerID`. */
   readonly model: string;
+  readonly variant?: string;
 }
 
 /** What the `models.changed` RPC event carries. */
@@ -156,13 +164,48 @@ export interface OpenCode2ModelChangeNotice {
   readonly agents: readonly OpenCode2ModelChange[];
 }
 
+function within(value: string, max: number): boolean {
+  return value.length > 0 && value.length <= max;
+}
+
+/**
+ * The event entry for one agent, or `undefined` when a field cannot fit the
+ * event's bounds. A display name that does not fit is left out; the TUI then
+ * names the agent by its id.
+ */
+function modelChange(
+  name: string,
+  projection: OpenCode2AgentProjection,
+): OpenCode2ModelChange | undefined {
+  const model = projection.model;
+  if (model === undefined) return undefined;
+  if (!within(name, MAX_AGENT_LENGTH)) return undefined;
+  if (!within(model.providerID, MAX_MODEL_FIELD_LENGTH)) return undefined;
+  if (!within(model.id, MAX_MODEL_FIELD_LENGTH)) return undefined;
+  if (model.variant !== undefined && !within(model.variant, MAX_VARIANT_LENGTH))
+    return undefined;
+  const displayName = projection.displayName;
+  return {
+    agent: name,
+    ...(displayName === undefined ||
+    !within(displayName, MAX_DISPLAY_NAME_LENGTH)
+      ? {}
+      : { displayName }),
+    providerID: model.providerID,
+    model: model.id,
+    ...(model.variant === undefined ? {} : { variant: model.variant }),
+  };
+}
+
 /**
  * The agents whose resolved model changed between two published catalogs
  * because a newer recommendations list was applied, or `undefined` when there
- * are none. A change is attributed to the list only when the new catalog has
- * a different applied `issued` than the old one and the list set that agent's
- * models; a change from a user's own edit, or from a list being skipped, is
- * not reported.
+ * are none. The change is attributed to the list only when nothing but
+ * `applied.json` differs between the two catalogs (same `baseRevision`: same
+ * config and prompt bytes, model and skill inventory, held agents), the new
+ * catalog applied a different `issued`, and the list sets that agent's
+ * models. A reload that also carries a user's edit or an inventory change is
+ * not announced, so a model the user chose is never credited to the list.
  */
 export function recommendedModelChanges(
   previous: OpenCode2CatalogCandidate,
@@ -171,6 +214,7 @@ export function recommendedModelChanges(
   const updates = next.modelUpdates;
   if (updates.state !== "applied" || updates.issued === undefined)
     return undefined;
+  if (previous.baseRevision !== next.baseRevision) return undefined;
   if (
     previous.modelUpdates.state === "applied" &&
     previous.modelUpdates.issued === updates.issued
@@ -187,14 +231,9 @@ export function recommendedModelChanges(
       before?.variant === after.model.variant
     )
       continue;
-    agents.push({
-      agent: name,
-      ...(after.displayName === undefined
-        ? {}
-        : { displayName: after.displayName }),
-      providerID: after.model.providerID,
-      model: after.model.id,
-    });
+    const change = modelChange(name, after);
+    if (change === undefined) continue;
+    agents.push(change);
     if (agents.length === MAX_MODEL_CHANGE_AGENTS) break;
   }
   if (agents.length === 0) return undefined;

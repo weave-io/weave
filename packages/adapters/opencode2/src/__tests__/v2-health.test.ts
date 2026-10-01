@@ -17,6 +17,7 @@ function catalogWithIssues(count: number): OpenCode2CatalogCandidate {
     sources: [],
     heldAgents: [],
     modelUpdates: MODEL_UPDATES_OFF,
+    baseRevision: "b".repeat(64),
   };
 }
 

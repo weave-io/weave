@@ -277,8 +277,8 @@ filled by `ModelRecommendations` in `@weaveio/weave-config`
 - once after the first catalog publish (normally during setup, or the first
   later refresh that publishes when setup's config was broken);
 - on admitted work: each prompt the `prompt` hook sees and each plan start
-  (`/weave:start` or the `start` RPC), just before the existing
-  `refreshIfDue()`.
+  (`/weave:start` or the `start` RPC), once that turn's `refreshIfDue()` has
+  settled, so the check never races the turn's own source probe.
 
 The settings are the published catalog's merged `settings.model_updates`, so
 an edit that turns updates off takes effect with the next published catalog.
@@ -313,11 +313,14 @@ mode or about the last check's error: `weave models status` reports those.
 
 **The notice.** When a reload moves agents to new models because a newer list
 was applied, the server plugin emits one `models.changed` RPC event:
-`{ issued, agents: [{ agent, displayName?, providerID, model }] }`, with at most
-64 agents. A change counts only when the new catalog's applied `issued`
-differs from the old one's, the list sets that agent's `models`, and the
-agent's resolved model (or variant) differs; a user's own edit, a skipped list
-or a first publish at setup emits nothing. The `./tui` plan panel listens for
+`{ issued, agents: [{ agent, displayName?, providerID, model, variant? }] }`,
+with at most 64 agents. A change counts only when nothing but `applied.json`
+differs between the two catalogs (each candidate carries a `baseRevision`
+computed without it), the new catalog applied a different `issued`, the list
+sets that agent's `models`, and the agent's resolved model or variant
+differs. A reload that also carries a user's edit or a host inventory change,
+a skipped list, or the first publish at setup emits nothing, so a model the
+user chose is never credited to the list. The `./tui` plan panel listens for
 it and, for a session in the same Location, shows an info toast such as
 "Loom now runs on claude-opus-5.6 (model recommendations of 1 Oct 2026)"
 ([`model-update-notice.ts`](../../packages/adapters/opencode2/src/v2/model-update-notice.ts)).

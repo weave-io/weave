@@ -49,5 +49,6 @@ export function catalog(
     sources: [],
     heldAgents: [],
     modelUpdates: MODEL_UPDATES_OFF,
+    baseRevision: "b".repeat(64),
   };
 }

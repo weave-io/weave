@@ -11,6 +11,7 @@ export interface ModelUpdateNoticeInput {
     readonly agent: string;
     readonly displayName?: string;
     readonly model: string;
+    readonly variant?: string;
   }[];
 }
 
@@ -39,6 +40,11 @@ export function formatIssuedDate(issued: string): string {
   return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
 }
 
+function modelLabel(agent: ModelUpdateNoticeInput["agents"][number]): string {
+  if (agent.variant === undefined) return agent.model;
+  return `${agent.model}#${agent.variant}`;
+}
+
 function agentLabel(agent: ModelUpdateNoticeInput["agents"][number]): string {
   if (agent.displayName !== undefined) return agent.displayName;
   return `${agent.agent.charAt(0).toUpperCase()}${agent.agent.slice(1)}`;
@@ -53,8 +59,8 @@ export function modelUpdateNotice(input: ModelUpdateNoticeInput): string {
   const named = input.agents.slice(0, NAMED_AGENTS);
   const parts = named.map((agent, index) =>
     index === 0
-      ? `${agentLabel(agent)} now runs on ${agent.model}`
-      : `${agentLabel(agent)} on ${agent.model}`,
+      ? `${agentLabel(agent)} now runs on ${modelLabel(agent)}`
+      : `${agentLabel(agent)} on ${modelLabel(agent)}`,
   );
   const rest = input.agents.length - named.length;
   const restText =

@@ -189,11 +189,13 @@ export async function setupOpenCode2(
     },
   );
   // Admitted work (a prompt, a plan start) checks for recommendations too;
-  // the throttle makes most of these a no-op. A list fetched here lands on a
-  // later refresh, so the turn that fetched it is not delayed.
+  // the throttle makes most of these a no-op. The check starts only once this
+  // turn's catalog refresh has settled, so it can neither delay the turn nor
+  // race its source probe: a list it fetches lands on a later refresh.
   const admitted = () => {
-    modelUpdates.trigger();
-    return controller.refreshIfDue();
+    const refreshed = controller.refreshIfDue();
+    void refreshed.then(() => modelUpdates.trigger());
+    return refreshed;
   };
   const initial = await controller.initialize();
   if (initial.isErr())

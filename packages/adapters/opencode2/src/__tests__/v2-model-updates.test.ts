@@ -217,6 +217,61 @@ describe("recommendedModelChanges", () => {
     ).toBeUndefined();
   });
 
+  it("credits nothing to the list when the user's config or the inventory changed in the same reload", () => {
+    const edited = {
+      ...onModels({ loom: "opus-5-6" }, APPLIED_2),
+      baseRevision: "c".repeat(64),
+    };
+    expect(
+      recommendedModelChanges(
+        onModels({ loom: "opus-5-5" }, APPLIED_1),
+        edited,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("names the variant when only the variant moved", () => {
+    const withVariant = onModels({ loom: "opus-5-5" }, APPLIED_2);
+    const loom = withVariant.agents.get("loom");
+    const next = {
+      ...withVariant,
+      agents: new Map([
+        [
+          "loom",
+          {
+            ...(loom as OpenCode2AgentProjection),
+            model: { providerID: "anthropic", id: "opus-5-5", variant: "high" },
+          } as OpenCode2AgentProjection,
+        ],
+      ]),
+    };
+    expect(
+      recommendedModelChanges(onModels({ loom: "opus-5-5" }, APPLIED_1), next)
+        ?.agents,
+    ).toEqual([
+      {
+        agent: "loom",
+        providerID: "anthropic",
+        model: "opus-5-5",
+        variant: "high",
+      },
+    ]);
+  });
+
+  it("leaves out a display name the event cannot carry", () => {
+    for (const displayName of ["", "x".repeat(129)]) {
+      const notice = recommendedModelChanges(
+        onModels({ loom: "opus-5-5" }, APPLIED_1),
+        onModels({ loom: "opus-5-6" }, APPLIED_2, { displayName }),
+      );
+      expect(notice?.agents[0]).toEqual({
+        agent: "loom",
+        providerID: "anthropic",
+        model: "opus-5-6",
+      });
+    }
+  });
+
   it("ignores a list that left every model where it was", () => {
     expect(
       recommendedModelChanges(
@@ -253,6 +308,17 @@ describe("modelUpdateNotice", () => {
       }),
     ).toBe(
       "Loom now runs on a, The Tapestry on b, Shuttle on c and 2 more agents (model recommendations of 31 Dec 2026)",
+    );
+  });
+
+  it("writes a variant the way a models entry does", () => {
+    expect(
+      modelUpdateNotice({
+        issued: "2026-10-01T09:00:00Z",
+        agents: [{ agent: "loom", model: "gpt-6-sol", variant: "high" }],
+      }),
+    ).toBe(
+      "Loom now runs on gpt-6-sol#high (model recommendations of 1 Oct 2026)",
     );
   });
 
@@ -310,7 +376,15 @@ describe("model updates in the RPC contract", () => {
     expect(status(valid)).toBe(true);
     expect(status({ ...valid, state: "stale" })).toBe(false);
     expect(status({ ...valid, evidence: "https://example.test" })).toBe(false);
-    expect(status({ ...valid, issued: "x".repeat(65) })).toBe(false);
+    expect(status({ ...valid, issued: "2026-10-01T09:00:00Z" })).toBe(false);
+    const applied = {
+      ...valid,
+      state: "applied",
+      issued: "2026-10-01T09:00:00Z",
+    };
+    expect(status(applied)).toBe(true);
+    expect(status({ ...applied, issued: undefined })).toBe(false);
+    expect(status({ ...applied, issued: "x".repeat(65) })).toBe(false);
   });
 
   it("bounds the models.changed event", () => {

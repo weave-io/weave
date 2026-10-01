@@ -330,6 +330,17 @@ describe("a promoted recommendations list (Spec 39, task 6.2)", () => {
     expect(rebuilt.revision).not.toBe(catalog.revision);
     expect(rebuilt.modelUpdates.issued).toBe(second.issued);
     expect(String(rebuilt.agents.get("loom")?.model?.id)).toBe("loom-b");
+    // Only applied.json changed, so the change can be credited to the list.
+    expect(rebuilt.baseRevision).toBe(catalog.baseRevision);
+    files.set(
+      projectConfig,
+      encode(
+        "settings { model_updates { mode auto } }\nagent loom { temperature 0.2 }",
+      ),
+    );
+    expect((await build(files)).catalog.baseRevision).not.toBe(
+      catalog.baseRevision,
+    );
   });
 
   it("sees the first promotion after a missing applied.json as a change", async () => {
