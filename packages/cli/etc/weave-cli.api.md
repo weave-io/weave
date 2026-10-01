@@ -39,8 +39,9 @@ export interface CliDeps {
     env?: Record<string, string | undefined>;
     // Warning: (ae-forgotten-export) The symbol "FileSystem_2" needs to be exported by the entry point index.d.ts
     fs?: FileSystem_2;
-    modelRecommendations?: ComposeModelRecommendationsDeps;
+    modelRecommendations?: CliModelRecommendationsDeps;
     now?: () => Date;
+    prompt?: PromptAdapter;
     // (undocumented)
     terminal: TerminalIO;
 }
@@ -53,17 +54,13 @@ export interface CliDeps {
 // @public
 export type CliError = InvalidArgsError | MissingFileError | FileReadError | FileWriteError | ParseFailureError | ValidationFailureError | AgentNotFoundError | CompositionFailureError | UnknownCommandError | EvalValidationError;
 
+// Warning: (ae-forgotten-export) The symbol "ModelRecommendationsDeps" needs to be exported by the entry point index.d.ts
+//
+// @public
+export type CliModelRecommendationsDeps = Pick<ModelRecommendationsDeps, "fetch" | "files" | "shell" | "publicKeys" | "baseUrl" | "uniqueId">;
+
 // @public (undocumented)
 export type Command = "help" | "version" | "init" | "validate" | "run" | "prompt" | "runtime" | "eval" | "compose" | "models" | "unknown";
-
-// @public
-export interface ComposeModelRecommendationsDeps {
-    readonly baseUrl?: string;
-    readonly fetch?: (url: string, init: RequestInit) => Promise<Response>;
-    readonly now?: () => Date;
-    readonly publicKeys?: readonly string[];
-    readonly timeoutMs?: number;
-}
 
 // @public (undocumented)
 export const defaultThemeManager: ThemeManager;
@@ -141,7 +138,7 @@ export interface ParsedArgs {
         outDir?: string;
         init?: boolean;
         bootstrapDir?: string;
-        modelsSubcommand?: "check";
+        modelsSubcommand?: "check" | "status" | "update" | "apply" | "pin";
         modelsEnvelope?: boolean;
         modelsExpect?: string;
         modelsKey?: string;
@@ -160,6 +157,54 @@ export type ParseFailureError = {
 
 // @public
 export const PLAIN_LOGO_LINES: string[];
+
+// @public (undocumented)
+export interface PromptAdapter {
+    // (undocumented)
+    cancel(message: string): Result<void, PromptError>;
+    // (undocumented)
+    confirm(input: {
+        message: string;
+        initialValue: boolean;
+    }): Promise<Result<boolean, PromptError>>;
+    // (undocumented)
+    isInteractive(): boolean;
+    // (undocumented)
+    multiselect<T extends string>(input: {
+        message: string;
+        options: PromptOption<T>[];
+        initialValues?: T[];
+        required?: boolean;
+    }): Promise<Result<T[], PromptError>>;
+    // (undocumented)
+    select<T extends string>(input: {
+        message: string;
+        options: PromptOption<T>[];
+        initialValue?: T;
+    }): Promise<Result<T, PromptError>>;
+    // (undocumented)
+    text(input: {
+        message: string;
+        defaultValue: string;
+        placeholder?: string;
+    }): Promise<Result<string, PromptError>>;
+}
+
+// @public (undocumented)
+export type PromptError = {
+    type: "PromptCancelled";
+    message: string;
+} | {
+    type: "PromptUnavailable";
+    message: string;
+};
+
+// @public (undocumented)
+export type PromptOption<T extends string> = {
+    value: T;
+    label: string;
+    hint?: string;
+};
 
 // @public
 export class RealTerminal implements TerminalIO {

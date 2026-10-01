@@ -1,0 +1,10 @@
+{
+  "case_id": "warp-security-guarded-parameterised-sql",
+  "suite": "warp-security",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judgment case: the verdict is withheld from the model. The change trips Warp's injection patterns (query parameters interpolated into a SQL template, a user-chosen ORDER BY through `sql.unsafe`) but every user value is a bound parameter and `sql.unsafe` only ever receives one of three constant strings. Score an APPROVE verdict with BLOCKERS: 0/3. Non-blocking SUSPECTED notes are acceptable."
+  }
+}

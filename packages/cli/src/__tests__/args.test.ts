@@ -577,3 +577,31 @@ describe("models check", () => {
     });
   });
 });
+
+describe("models status, update, apply and pin", () => {
+  it.each([
+    "status",
+    "update",
+    "apply",
+    "pin",
+  ] as const)("parses %s as a models subcommand", (subcommand) => {
+    const parsed = parseArgs([
+      "bun",
+      "weave",
+      "models",
+      subcommand,
+      "--harness",
+      "pi",
+      "--project-root",
+      "/work",
+      "--yes",
+    ])._unsafeUnwrap();
+
+    expect(parsed.command).toBe("models");
+    expect(parsed.flags.modelsSubcommand).toBe(subcommand);
+    expect(parsed.flags.harness).toBe("pi");
+    expect(parsed.flags.projectRoot).toBe("/work");
+    expect(parsed.flags.yes).toBe(true);
+    expect(parsed.rest).toEqual([]);
+  });
+});

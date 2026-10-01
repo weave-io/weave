@@ -1,6 +1,9 @@
 /**
  * `weave models` — published model recommendations (Spec 39).
  *
+ * `status`, `update`, `apply` and `pin` are the user's side and live in
+ * `model-updates.ts`; this module routes to them and owns `check`.
+ *
  * `weave models check <file> [--envelope] [--key <public-key>] [--expect <file>]`
  * validates a recommendations list (or verifies a signed envelope), resolves
  * every harness section against the provider catalog fixtures, prints the
@@ -35,10 +38,12 @@ import {
   type ModelExpectations,
   ModelExpectationsSchema,
 } from "../models/expectations.js";
+import type { CliModelRecommendationsDeps } from "../models/recommendations-session.js";
 import {
   type CatalogResolution,
   RecommendationsResolver,
 } from "../models/resolve.js";
+import type { PromptAdapter } from "../prompt/index.js";
 import type { ThemeColors } from "../theme/colors.js";
 
 const ISO_UTC = z.iso.datetime();
@@ -52,6 +57,10 @@ export interface ModelsContext {
   fs?: FileSystem;
   /** The clock freshness is checked against. Defaults to the system clock. */
   now?: () => Date;
+  /** Network and cache access for status, update, apply and pin. */
+  modelRecommendations?: CliModelRecommendationsDeps;
+  /** Asks `weave models pin` for confirmation. Defaults to the terminal. */
+  prompt?: PromptAdapter;
 }
 
 interface CheckReport {
@@ -68,7 +77,16 @@ interface CheckReport {
 /** Usage lines for `weave models`. */
 export function modelsUsage(theme: ThemeColors): string[] {
   return [
-    `${theme.boldYellow("Usage:")} weave models check <file> [--envelope] [--key <public-key>] [--expect <expect-file>] [--issued-after <timestamp>] [--json]`,
+    `${theme.boldYellow("Usage:")} weave models <status|update|apply|pin|check>`,
+    "",
+    `  ${theme.cyan("weave models status")} ${theme.dim("[--harness <name>] [--project-root <dir>] [--json]")}`,
+    `      ${theme.dim("Mode, channel, the applied list, a waiting list, the last check, and each builtin agent's models with their sources")}`,
+    `  ${theme.cyan("weave models update")} ${theme.dim("[--harness <name>]")}  ${theme.dim("Check for a newer list now and print what changed")}`,
+    `  ${theme.cyan("weave models apply")} ${theme.dim("[--harness <name>]")}   ${theme.dim("Apply a waiting list (notify mode)")}`,
+    `  ${theme.cyan("weave models pin")} ${theme.dim("[--harness <name>] [--yes]")} ${theme.dim("Write the applied lists into ~/.weave/config.weave as explicit models")}`,
+    `      ${theme.dim("--harness: opencode2 (default), claude-code or pi; opencode and copilot take no recommendations")}`,
+    "",
+    `  ${theme.cyan("weave models check")} <file> [--envelope] [--key <public-key>] [--expect <expect-file>] [--issued-after <timestamp>] [--json]`,
     "",
     `  ${theme.cyan("<file>")}                  ${theme.dim("A recommendations list (JSON), or with --envelope a signed envelope")}`,
     `  ${theme.cyan("--envelope")}              ${theme.dim("Verify the envelope's Ed25519 signature, then check its list")}`,
@@ -304,13 +322,31 @@ class ModelsCheck {
   }
 }
 
-/** Run `weave models <subcommand>`. Exit 0 on success, 1 on any failure. */
+/** Run `weave models <subcommand>`. Exit codes are documented in docs/cli.md. */
 export async function runModels(
   ctx: ModelsContext,
 ): Promise<Result<number, CliError>> {
-  if (ctx.flags.modelsSubcommand !== "check") {
+  const subcommand = ctx.flags.modelsSubcommand;
+  if (subcommand === undefined) {
     ctx.terminal.stderr(modelsUsage(ctx.theme).join("\n"));
     return ok(1);
+  }
+  if (subcommand !== "check") {
+    if (ctx.rest.length > 0) {
+      ctx.terminal.stderr(
+        [
+          formatCliError({
+            type: "InvalidArgs",
+            message: `unexpected arguments: ${ctx.rest.join(" ")}`,
+          }),
+          "",
+          ...modelsUsage(ctx.theme),
+        ].join("\n"),
+      );
+      return ok(1);
+    }
+    const { runModelUpdates } = await import("./model-updates.js");
+    return runModelUpdates(ctx, subcommand);
   }
   const [path, ...extra] = ctx.rest;
   if (path === undefined || extra.length > 0) {

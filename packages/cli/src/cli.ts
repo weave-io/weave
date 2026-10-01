@@ -11,7 +11,8 @@ import { parseArgs } from "./args.js";
 import { type CliError, formatCliError } from "./errors.js";
 import type { FileSystem } from "./fs/file-system.js";
 import { RealTerminal, type TerminalIO } from "./io/terminal.js";
-import type { ComposeModelRecommendationsDeps } from "./models/compose-refresh.js";
+import type { CliModelRecommendationsDeps } from "./models/recommendations-session.js";
+import type { PromptAdapter } from "./prompt/index.js";
 import { defaultThemeManager } from "./theme/colors.js";
 import { defaultThemeRenderer } from "./theme/render.js";
 
@@ -39,17 +40,21 @@ export interface CliDeps {
    */
   env?: Record<string, string | undefined>;
   /**
-   * The clock commands check time-bound files against — currently
-   * `weave models check`, for a list's `issued` and `expires`. Defaults to the
+   * The clock commands check time-bound files against — currently the
+   * `weave models` commands, `weave validate` and `weave compose`, for a
+   * list's `issued` and `expires` and the refresh throttle. Defaults to the
    * system clock.
    */
   now?: () => Date;
   /**
-   * How `weave compose` fetches and verifies model recommendations (Spec 39):
-   * `fetch`, clock, public keys, base URL and timeout. Defaults to production
-   * behaviour. Black-box tests inject a stub `fetch` and throwaway keys.
+   * Network and cache access for model recommendations, used by the
+   * `weave models` cache commands, `weave validate` and `weave compose`
+   * (which refreshes at Claude Code session start). Defaults to
+   * tryweave.io and the cache under the global config directory.
    */
-  modelRecommendations?: ComposeModelRecommendationsDeps;
+  modelRecommendations?: CliModelRecommendationsDeps;
+  /** Interactive prompts for `weave models pin`. Defaults to the terminal. */
+  prompt?: PromptAdapter;
 }
 
 function defaultDeps(): CliDeps {
@@ -70,7 +75,16 @@ function defaultDeps(): CliDeps {
 export async function run(
   deps?: Partial<CliDeps>,
 ): Promise<Result<number, CliError>> {
-  const { argv, terminal, colorEnabled, fs, env, now, modelRecommendations } = {
+  const {
+    argv,
+    terminal,
+    colorEnabled,
+    fs,
+    env,
+    now,
+    modelRecommendations,
+    prompt,
+  } = {
     ...defaultDeps(),
     ...deps,
   };
@@ -135,7 +149,14 @@ export async function run(
       // Delegate to validate command — imported dynamically to keep
       // this router lean and avoid circular deps during init
       const { runValidate } = await import("./commands/validate.js");
-      return runValidate({ terminal, theme, flags, fs });
+      return runValidate({
+        terminal,
+        theme,
+        flags,
+        fs,
+        now,
+        modelRecommendations,
+      });
     }
 
     case "init": {
@@ -195,12 +216,28 @@ export async function run(
 
     case "compose": {
       const { runCompose } = await import("./commands/compose.js");
-      return runCompose({ terminal, theme, flags, fs, modelRecommendations });
+      return runCompose({
+        terminal,
+        theme,
+        flags,
+        fs,
+        now,
+        modelRecommendations,
+      });
     }
 
     case "models": {
       const { runModels } = await import("./commands/models.js");
-      return runModels({ terminal, theme, flags, rest, fs, now });
+      return runModels({
+        terminal,
+        theme,
+        flags,
+        rest,
+        fs,
+        now,
+        modelRecommendations,
+        prompt,
+      });
     }
 
     case "unknown": {

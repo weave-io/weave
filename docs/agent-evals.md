@@ -826,7 +826,7 @@ Weave currently supports an **eight-suite text-only eval surface**. Every regist
 | `spindle-tools` | `SpindleToolsRunner` | Spindle emits source-cited research structure with explicit `Source facts`, `Interpretation`, `Sources`, and bounded confidence from assistant text |
 | `pattern-planning` | `PatternPlanningRunner` | Pattern emits structurally explicit plans with observable scope, file-task, sequencing, and acceptance signals |
 | `weft-review` | `WeftReviewRunner` | Weft emits structurally explicit review verdicts, blocker counts, and actionable file-cited approval or rejection signals; its judged review cases check that a rejection names the right defect and that a clean change is approved without invented blockers |
-| `warp-security` | `WarpSecurityRunner` | Warp emits structurally explicit security triage, capped blocker counts, and evidence-backed findings from assistant text |
+| `warp-security` | `WarpSecurityRunner` | Warp emits structurally explicit security triage, capped blocker counts, and evidence-backed findings from assistant text; its `judge-scored` cases check that a BLOCK names the real flaw, and its `judgment` approvals that it does not block a change that only looks dangerous |
 
 All suites share the same case schema, rubric schema, and model matrix. The shared suite registry is the source of truth for suite IDs, short `--agent` aliases, prompt snapshot coverage, and registry-driven sync tests. Suites are run in parallel across all models in the effective model set.
 
@@ -1673,6 +1673,10 @@ They pair the way judgment cases do: a feature whose tests are real against one 
 
 `shuttle-execution` cases tagged `own-envelope` (Spec 39 task 0.3, gap G3 in the [eval readiness record](artifacts/eval-readiness-model-recommendations.md)) carry the whole delegated task and the session so far (edits, commands and observed output) in their description. The runner sends it as written, with no section script and no signal names, and the judge scores the report against the case's expected outcome and rubric notes. They are judged rather than deterministic because the runner's honesty signals assume nothing ran: a report that quotes `14 pass, 1 fail` from the session is honest there. Nine were added on 1 Oct 2026, taking the suite from 3 to 12 text cases. Some come in act / don't-act pairs like judgment cases: `reports-preexisting-failure` (leave a failure the change did not cause) against `owns-failure-it-caused`. See "Own-envelope cases" in [`evals/README.md`](../evals/README.md#own-envelope-cases-own-envelope-tag).
 
+#### Warp judge-scored cases
+
+`warp-security` cases tagged `judge-scored` (Spec 39 task 0.3, gap G3) withhold the verdict like judgment cases, but the judge scores them against the case's expected outcome, which names the specific flaw the review must find. A deterministic verdict check cannot tell a BLOCK for the right reason from a well-formed BLOCK for the wrong one, and on these cases a skeptical reviewer blocks either way. `required_artifacts` is empty, so the runner tells the model "Required structural signals: none" and the judge asks whether the review achieves the expected outcome, reading the rubric notes for what fails (an APPROVE, or a BLOCK that misses the flaw). Six were added on 1 Oct 2026 with two deterministic `judgment` approvals, taking the suite from 4 to 12 text cases. A corpus guard in [`warp-security-runner.test.ts`](../packages/cli/src/evals/__tests__/warp-security-runner.test.ts) keeps each case's shape. See "Warp-security fixture guidance" in [`evals/README.md`](../evals/README.md#warp-security-fixture-guidance).
+
 ### Text-only contract, no longer an explicit non-goal for the whole eval surface
 
 Current text-only evals are for **assistant-text structure only**. They are not runtime-backed harness evals. That means, for the text-only track specifically:
@@ -2003,7 +2007,7 @@ Weft review eval prompts are synthetic by design. The case description and runne
 
 The builtin Weft prompt is intentionally aligned to that visible contract without lowering review standards. It now tells Weft to open with exactly one bracketed verdict tag, always name the reviewed files, and express merge-blocking findings as one actionable `BLOCKER:` line per issue with backticked file references. The honesty contract still applies: Weft must not invent runtime evidence, passing tests, or line numbers that were not actually provided in the review context.
 
-Warp security eval prompts are synthetic by design too. The suite scores only text-observable security review structure: `APPROVE` or `BLOCK`, bounded blocker counts, and evidence-backed finding groups with file references. It does not attempt runtime exploit execution, live secret scanning, or exploit validation.
+Warp security eval prompts are synthetic by design too. The suite scores only what the review text shows: `APPROVE` or `BLOCK`, bounded blocker counts, evidence-backed finding groups with file references and, on `judge-scored` cases, whether a finding names the flaw the case contains. It does not attempt runtime exploit execution, live secret scanning, or exploit validation.
 
 Spindle tools eval prompts are synthetic too. The suite scores only text-observable research structure: inline citations, a distinct `Source facts` section, a distinct `Interpretation` section, a bounded `Confidence:` line, and a final `Sources:` list. It does not attempt to prove that a browser, search tool, or network event actually occurred; those runtime-only assertions are rejected by the shared text-only fixture contract unless they are surfaced as ordinary plain-text claims in the answer.
 

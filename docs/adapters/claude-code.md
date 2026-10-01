@@ -86,7 +86,9 @@ read, written or fetched. The refresh keeps its own throttle: at most one
 request a day, or an hour after a failed check; every other session start costs
 one read of `state.json`. In `auto` mode a verified, newer list is promoted to
 `applied.json`, which the next session's compose merges; in `notify` mode it
-waits in `latest.json`.
+waits in `latest.json` until `weave models apply`. `weave models status` shows
+the cache, and `weave models update` forces a check with the usual 5 s
+timeout ([CLI](../cli.md#weave-models-status-update-apply-and-pin)).
 
 **Why the hook waits for it, briefly.** The hook is a short-lived process and
 Claude Code waits for it before the session starts. Compose awaits the refresh

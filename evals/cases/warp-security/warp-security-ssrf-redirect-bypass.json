@@ -1,0 +1,21 @@
+{
+  "id": "warp-security-ssrf-redirect-bypass",
+  "description": "Change under review: show a preview of a link that a user pastes into a chat message. Added files are shown in full.\n\n`src/preview/fetch-preview.ts` (added):\n```ts\n1 import { lookup } from \"node:dns/promises\";\n2 import { isPrivateAddress } from \"../net/ip.js\";\n3 import { extractTitle, readTextCapped } from \"./html.js\";\n4\n5 export async function fetchPreview(rawUrl: string): Promise<string> {\n6   const url = new URL(rawUrl);\n7   if (url.protocol !== \"https:\") throw new Error(\"https only\");\n8   const { address } = await lookup(url.hostname);\n9   if (isPrivateAddress(address)) throw new Error(\"private address\");\n10   const res = await fetch(url, { signal: AbortSignal.timeout(5000) });\n11   const body = await readTextCapped(res, 65_536);\n12   return extractTitle(body) ?? body.slice(0, 300);\n13 }\n```\n\n`src/routes/preview.ts` (added):\n```ts\n1 import { requireSession } from \"../auth/session.js\";\n2 import { fetchPreview } from \"../preview/fetch-preview.js\";\n3\n4 export const preview = requireSession(async (req) => {\n5   const { url } = await req.json();\n6   return Response.json({ preview: await fetchPreview(String(url)) });\n7 });\n```\n\n`readTextCapped` is an existing helper that stops reading the body after the given number of bytes. `isPrivateAddress` is existing, tested code that rejects loopback, RFC 1918, link-local (including `169.254.169.254`) and their IPv6 equivalents. The service runs on a cloud VM whose metadata endpoint, `http://169.254.169.254/`, returns temporary cloud credentials. Anyone who signs up can post chat messages. Existing middleware enforces CSRF protection on every state-changing route: the session cookie is `SameSite=Strict`, and a request without a valid `X-CSRF-Token` header is rejected.",
+  "suite": "warp-security",
+  "allowed_agents": [
+    "warp"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Block the change: the private-address check in `src/preview/fetch-preview.ts` validates only the first DNS answer for the URL the user gave. `fetch` follows redirects by default and resolves the hostname again when it connects, so a user's https URL that redirects to `http://169.254.169.254/`, or a hostname that re-resolves to it (DNS rebinding), reaches the metadata endpoint, and up to 300 characters of the response are returned to the user. A blocking finding must identify that the check can be bypassed through redirects or re-resolution, and fix it, for example with `redirect: \"manual\"` and re-validating every hop, connecting to the address that was checked, or an egress proxy that blocks internal ranges.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "security",
+    "judge-scored",
+    "block",
+    "ssrf"
+  ]
+}

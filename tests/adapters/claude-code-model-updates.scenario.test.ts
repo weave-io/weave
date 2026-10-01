@@ -5,82 +5,50 @@
  * runs `weave compose --adapter claude-code`, so each "session start" here is
  * that command, driven through the CLI's `run()`. What a user observes is the
  * generated bundle (the model in Loom's agent file), the hook's exit code, and
- * what it prints. The recommendations `fetch` is stubbed to serve lists signed
- * by a throwaway key; nothing touches the network.
- *
- * The project lives in a `MemoryFileSystem`. The recommendations cache lives
- * under the global config directory, which each scenario points at an empty
- * temporary directory on disk: the refresh writes it there, and the overlay
- * filesystem below lets compose's config loader read it back.
+ * what it prints on stdout (which Claude Code adds to the session's context)
+ * and stderr. The project is a virtual disk; the network, the clock and the
+ * recommendations cache are fakes, and lists are signed with a throwaway key
+ * made for this run.
  */
 
-import { describe, expect, it } from "bun:test";
-import type { ResultAsync } from "neverthrow";
+import { beforeAll, describe, expect, it } from "bun:test";
+import {
+  globalConfigDir,
+  modelRecommendationsCachePaths,
+} from "@weaveio/weave-config";
 import { run } from "../../packages/cli/src/cli.js";
-import {
-  BunFileSystem,
-  type FileSystemError,
-  MemoryFileSystem,
-} from "../../packages/cli/src/fs/file-system.js";
+import { MemoryFileSystem } from "../../packages/cli/src/fs/file-system.js";
 import { BufferTerminal } from "../../packages/cli/src/io/terminal.js";
-import type { ComposeModelRecommendationsDeps } from "../../packages/cli/src/models/compose-refresh.js";
-import { modelRecommendationsCachePaths } from "../../packages/config/src/index.js";
 import {
-  HOUR,
-  type Keys,
-  STUB_BASE_URL,
-  StubServer,
-  signedList,
-  throwawayKeys,
-  withGlobalDir,
+  generateSigningKeys,
+  MemoryRecommendationsCache,
+  ScriptedFetch,
+  type SigningKeys,
+  signedEnvelope,
 } from "../support/model-recommendations.js";
 
 const PROJECT_DIR = "/project";
 const HOME_DIR = "/home/user";
 const LOOM_FILE = `${PROJECT_DIR}/.weave/plugins/claude-code/agents/loom.md`;
+const HOUR = 3_600_000;
 
-/**
- * The project in memory, the global config directory (and so the
- * recommendations cache) on disk.
- */
-class ProjectInMemory extends MemoryFileSystem {
-  private readonly disk = new BunFileSystem();
+let keys: SigningKeys;
 
-  constructor(
-    files: Record<string, string>,
-    private readonly globalDir: string,
-  ) {
-    super(files, PROJECT_DIR, HOME_DIR);
-  }
+beforeAll(async () => {
+  keys = await generateSigningKeys();
+});
 
-  override exists(path: string): ResultAsync<boolean, FileSystemError> {
-    if (this.onDisk(path)) return this.disk.exists(path);
-    return super.exists(path);
-  }
-
-  override readText(path: string): ResultAsync<string, FileSystemError> {
-    if (this.onDisk(path)) return this.disk.readText(path);
-    return super.readText(path);
-  }
-
-  private onDisk(path: string): boolean {
-    return path.startsWith(`${this.globalDir}/`);
-  }
-}
-
-/** The project's config: model updates in the given mode. */
-function configWith(mode: "auto" | "notify" | "off"): Record<string, string> {
+/** A published list issued on `day` October 2026, putting Loom on `tier`. */
+function list(day: number, tier: string) {
   return {
-    [`${PROJECT_DIR}/.weave/config.weave`]: `settings { model_updates { mode ${mode} } }\n`,
-  };
-}
-
-/** A list whose `claude-code` section puts Loom on `tier`. */
-function claudeCodeList(keys: Keys, hoursAgo: number, tier: string) {
-  return signedList(keys, hoursAgo, {
+    schema: 1,
+    channel: "stable",
+    issued: `2026-10-0${day}T09:00:00Z`,
+    expires: "2026-12-20T09:00:00Z",
+    evidence: `https://tryweave.io/evals/runs/run-${day}`,
     default: { agents: { loom: { models: ["gpt-6-sol"] } } },
     harnesses: { "claude-code": { agents: { loom: { models: [tier] } } } },
-  });
+  };
 }
 
 interface SessionStart {
@@ -92,36 +60,64 @@ interface SessionStart {
   readonly ms: number;
 }
 
-/** One Claude Code session start: the bootstrap hook's compose. */
-async function sessionStart(
-  fs: MemoryFileSystem,
-  modelRecommendations: ComposeModelRecommendationsDeps,
-): Promise<SessionStart> {
-  const terminal = new BufferTerminal();
-  const started = Date.now();
-  const result = await run({
-    argv: ["bun", "weave", "compose", "--adapter", "claude-code"],
-    terminal,
-    colorEnabled: false,
-    fs,
-    modelRecommendations,
-  });
-  const loomFile = await fs.readText(LOOM_FILE);
-  return {
-    exitCode: result._unsafeUnwrap(),
-    stdout: terminal.out.join("\n"),
-    stderr: terminal.err.join("\n"),
-    loom: loomFile.isOk()
-      ? /^model: (.+)$/m.exec(loomFile.value)?.[1]
-      : undefined,
-    ms: Date.now() - started,
-  };
+/** One user's machine: their project, the recommendations cache and the site. */
+class Machine {
+  readonly fs: MemoryFileSystem;
+  readonly cache: MemoryRecommendationsCache;
+  readonly site = new ScriptedFetch();
+  /** The machine's clock; scenarios move it past the refresh throttle. */
+  now = new Date("2026-10-02T12:00:00Z");
+  /** Replaces the site's `fetch`, for a server that is down or never answers. */
+  fetch?: (url: string) => Promise<Response>;
+
+  constructor(mode: "auto" | "notify" | "off") {
+    this.fs = new MemoryFileSystem(
+      {
+        [`${PROJECT_DIR}/.weave/config.weave`]: `settings { model_updates { mode ${mode} } }\n`,
+      },
+      PROJECT_DIR,
+      HOME_DIR,
+    );
+    this.cache = new MemoryRecommendationsCache(() => this.now);
+  }
+
+  async publish(published: unknown): Promise<void> {
+    this.site.serve(await signedEnvelope(published, keys));
+  }
+
+  /** A Claude Code session start: the bootstrap hook's compose. */
+  async sessionStart(): Promise<SessionStart> {
+    const terminal = new BufferTerminal();
+    const started = Date.now();
+    const result = await run({
+      argv: ["bun", "weave", "compose", "--adapter", "claude-code"],
+      terminal,
+      colorEnabled: false,
+      fs: this.fs,
+      now: () => this.now,
+      modelRecommendations: {
+        fetch: this.fetch ?? this.site.fetch,
+        files: this.cache,
+        shell: this.cache,
+        publicKeys: [keys.publicKey],
+        baseUrl: "https://models.test/models",
+      },
+    });
+    const loomFile = this.fs.snapshot()[LOOM_FILE];
+    return {
+      exitCode: result._unsafeUnwrap(),
+      stdout: terminal.out.join("\n"),
+      stderr: terminal.err.join("\n"),
+      loom:
+        loomFile === undefined
+          ? undefined
+          : /^model: (.+)$/m.exec(loomFile)?.[1],
+      ms: Date.now() - started,
+    };
+  }
 }
 
-/**
- * Runs a scenario once, on first use. Scenarios must not overlap: each one
- * owns `WEAVE_GLOBAL_CONFIG_DIR` while it runs.
- */
+/** Runs a scenario once, on first use. */
 function once<T>(start: () => Promise<T>): () => Promise<T> {
   let running: Promise<T> | undefined;
   return () => {
@@ -132,46 +128,30 @@ function once<T>(start: () => Promise<T>): () => Promise<T> {
 
 describe("a Claude Code user opts in to automatic model updates", () => {
   const scenario = once(async () => {
-    const keys = await throwawayKeys();
-    const server = new StubServer();
-    const first = await claudeCodeList(keys, 2, "sonnet");
-    const second = await claudeCodeList(keys, 1, "haiku");
-    // The refresher's clock, moved past the 24-hour throttle before the third
-    // session. The lists' own dates stay real, so the loader accepts them.
-    let clockOffset = 0;
-    server.body = first.body;
-    return withGlobalDir("weave-claude-code-model-updates", async (dir) => {
-      const fs = new ProjectInMemory(configWith("auto"), dir);
-      const deps: ComposeModelRecommendationsDeps = {
-        fetch: (url) => server.fetch(url),
-        publicKeys: [keys.publicKey],
-        baseUrl: STUB_BASE_URL,
-        now: () => new Date(Date.now() + clockOffset),
-      };
-      const firstSession = await sessionStart(fs, deps);
-      const afterFirst = server.requests.length;
-      const secondSession = await sessionStart(fs, deps);
-      const afterSecond = server.requests.length;
-      server.body = second.body;
-      clockOffset = 25 * HOUR;
-      const thirdSession = await sessionStart(fs, deps);
-      const afterThird = server.requests.length;
-      const fourthSession = await sessionStart(fs, deps);
-      return {
-        sessions: [firstSession, secondSession, thirdSession, fourthSession],
-        fetches: [afterFirst, afterSecond, afterThird],
-        requests: [...server.requests],
-        issued: { first: first.issued, second: second.issued },
-      };
-    });
+    const machine = new Machine("auto");
+    await machine.publish(list(1, "sonnet"));
+    const sessions: SessionStart[] = [];
+    const fetches: number[] = [];
+    const start = async () => {
+      sessions.push(await machine.sessionStart());
+      fetches.push(machine.site.urls.length);
+    };
+    await start();
+    await start();
+    // A day later a newer list is published.
+    await machine.publish(list(3, "haiku"));
+    machine.now = new Date(machine.now.getTime() + 25 * HOUR);
+    await start();
+    await start();
+    return { sessions, fetches, urls: [...machine.site.urls] };
   });
 
   it("composes the first session on the builtin lists and fetches the published list once", async () => {
-    const { sessions, fetches, requests } = await scenario();
+    const { sessions, fetches, urls } = await scenario();
     expect(sessions[0]?.exitCode).toBe(0);
     expect(sessions[0]?.loom).toBe("opus");
     expect(fetches[0]).toBe(1);
-    expect(requests[0]).toBe(`${STUB_BASE_URL}/stable.v1.json`);
+    expect(urls[0]).toBe("https://models.test/models/stable.v1.json");
   });
 
   it("composes the next session with the tier the claude-code section names", async () => {
@@ -188,54 +168,65 @@ describe("a Claude Code user opts in to automatic model updates", () => {
     const { sessions, fetches } = await scenario();
     expect(fetches[2]).toBe(2);
     expect(sessions[2]?.loom).toBe("sonnet");
+    expect(fetches[3]).toBe(2);
     expect(sessions[3]?.loom).toBe("haiku");
   });
 
   it("says in the summary which model lists the agents were composed from", async () => {
-    const { sessions, issued } = await scenario();
+    const { sessions } = await scenario();
     expect(sessions[0]?.stdout).toMatch(
       /Model lists: +builtin \(no stable recommendations applied yet\)/,
     );
     expect(sessions[1]?.stdout).toMatch(
-      new RegExp(
-        `Model lists: +recommended \\(stable, issued ${issued.first}\\)`,
-      ),
+      /Model lists: +recommended \(stable, issued 2026-10-01T09:00:00Z\)/,
     );
   });
 
   it("notes a newly applied list on stderr only, never on the hook's stdout", async () => {
-    const { sessions, issued } = await scenario();
+    const { sessions } = await scenario();
     expect(sessions[0]?.stderr).toContain(
-      `Model recommendations issued ${issued.first} were applied; they take effect at the next session.`,
+      "Model recommendations issued 2026-10-01T09:00:00Z were applied; they take effect at the next session.",
     );
     for (const session of sessions)
       expect(session.stdout).not.toContain("Model recommendations");
   });
 });
 
+describe("a Claude Code user is notified of model updates instead", () => {
+  const scenario = once(async () => {
+    const machine = new Machine("notify");
+    await machine.publish(list(1, "sonnet"));
+    const first = await machine.sessionStart();
+    const second = await machine.sessionStart();
+    return { first, second, fetches: machine.site.urls.length };
+  });
+
+  it("downloads the list at session start but keeps composing on the builtin lists", async () => {
+    const { first, second, fetches } = await scenario();
+    expect(fetches).toBe(1);
+    expect(first.stderr).toContain(
+      "Model recommendations issued 2026-10-01T09:00:00Z were downloaded; run `weave models apply` to use them.",
+    );
+    expect(second.loom).toBe("opus");
+  });
+});
+
 describe("a Claude Code user leaves model updates off", () => {
   const scenario = once(async () => {
-    const server = new StubServer();
-    return withGlobalDir("weave-claude-code-model-updates", async (dir) => {
-      const fs = new ProjectInMemory(configWith("off"), dir);
-      const session = await sessionStart(fs, {
-        fetch: (url) => server.fetch(url),
-        baseUrl: STUB_BASE_URL,
-      });
-      return {
-        session,
-        requests: [...server.requests],
-        cacheCreated: await Bun.file(
-          modelRecommendationsCachePaths("stable", dir).state,
-        ).exists(),
-      };
-    });
+    const machine = new Machine("off");
+    await machine.publish(list(1, "sonnet"));
+    const session = await machine.sessionStart();
+    return {
+      session,
+      urls: [...machine.site.urls],
+      cacheFiles: [...machine.cache.files.keys()],
+    };
   });
 
   it("never asks the server for a list and writes no cache", async () => {
-    const { requests, cacheCreated } = await scenario();
-    expect(requests).toEqual([]);
-    expect(cacheCreated).toBe(false);
+    const { urls, cacheFiles } = await scenario();
+    expect(urls).toEqual([]);
+    expect(cacheFiles).toEqual([]);
   });
 
   it("composes on the builtin lists and says nothing about model lists", async () => {
@@ -248,24 +239,15 @@ describe("a Claude Code user leaves model updates off", () => {
 
 describe("a Claude Code user's recommendations check fails", () => {
   const scenario = once(async () => {
-    const offline = await withGlobalDir(
-      "weave-claude-code-model-updates",
-      (dir) =>
-        sessionStart(new ProjectInMemory(configWith("auto"), dir), {
-          fetch: () => Promise.reject(new Error("getaddrinfo ENOTFOUND")),
-          baseUrl: STUB_BASE_URL,
-        }),
-    );
-    const hanging = await withGlobalDir(
-      "weave-claude-code-model-updates",
-      (dir) =>
-        sessionStart(new ProjectInMemory(configWith("auto"), dir), {
-          // A server that never answers and ignores the abort.
-          fetch: () => new Promise<Response>(() => undefined),
-          baseUrl: STUB_BASE_URL,
-          timeoutMs: 50,
-        }),
-    );
+    const offlineMachine = new Machine("auto");
+    offlineMachine.fetch = () =>
+      Promise.reject(new Error("getaddrinfo ENOTFOUND"));
+    const offline = await offlineMachine.sessionStart();
+
+    const hangingMachine = new Machine("auto");
+    // A server that never answers, and ignores the abort.
+    hangingMachine.fetch = () => new Promise<Response>(() => undefined);
+    const hanging = await hangingMachine.sessionStart();
     return { offline, hanging };
   });
 
@@ -277,35 +259,31 @@ describe("a Claude Code user's recommendations check fails", () => {
     expect(offline.stdout).not.toContain("the check failed");
   });
 
-  it("does not hold the session start for a server that never answers", async () => {
+  it("holds the session start for at most the refresh bound when the server never answers", async () => {
     const { hanging } = await scenario();
     expect(hanging.exitCode).toBe(0);
     expect(hanging.loom).toBe("opus");
-    expect(hanging.ms).toBeLessThan(1_500);
+    expect(hanging.ms).toBeLessThan(3_000);
   });
 });
 
 describe("a Claude Code user's applied list cannot be used", () => {
-  const scenario = once(() =>
-    withGlobalDir("weave-claude-code-model-updates", async (dir) => {
-      const paths = modelRecommendationsCachePaths("stable", dir);
-      await Bun.write(paths.applied, "not a signed list");
-      // A recent check, so this session start does not fetch.
-      await Bun.write(
-        paths.state,
-        JSON.stringify({ version: 1, lastCheck: new Date().toISOString() }),
-      );
-      const server = new StubServer();
-      const session = await sessionStart(
-        new ProjectInMemory(configWith("auto"), dir),
-        { fetch: (url) => server.fetch(url), baseUrl: STUB_BASE_URL },
-      );
-      return { session, requests: [...server.requests] };
-    }),
-  );
+  const scenario = once(async () => {
+    const machine = new Machine("auto");
+    const paths = modelRecommendationsCachePaths("stable", globalConfigDir());
+    machine.cache.files.set(paths.applied, "not a signed list");
+    // A recent check, so this session start does not fetch.
+    machine.cache.files.set(
+      paths.state,
+      JSON.stringify({ version: 1, lastCheck: "2026-10-02T11:00:00Z" }),
+    );
+    const session = await machine.sessionStart();
+    return { session, fetches: machine.site.urls.length };
+  });
 
   it("warns that the list was skipped, and composes on the builtin lists", async () => {
-    const { session } = await scenario();
+    const { session, fetches } = await scenario();
+    expect(fetches).toBe(0);
     expect(session.exitCode).toBe(0);
     expect(session.loom).toBe("opus");
     expect(session.stderr).toContain(

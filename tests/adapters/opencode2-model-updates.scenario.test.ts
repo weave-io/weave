@@ -15,20 +15,19 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { modelRecommendationsCachePaths } from "../../packages/config/src/index.js";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
-  STUB_BASE_URL as BASE_URL,
-  HOUR,
-  type Keys,
-  StubServer,
-  signedList,
-  throwawayKeys,
-  withGlobalDir as withGlobalDirNamed,
-} from "../support/model-recommendations.js";
+  modelRecommendationsCachePaths,
+  signModelRecommendations,
+} from "../../packages/config/src/index.js";
 import {
   type OpenCode2Host,
   withWeaveOnOpenCode2,
 } from "../support/opencode2.js";
+
+const HOUR = 3_600_000;
+const BASE_URL = "https://models.test/models";
 
 /** Bare model ids, so the default section resolves each to one provider. */
 const HOST_MODELS = [
@@ -36,11 +35,59 @@ const HOST_MODELS = [
   { providerID: "probe", id: "loom-b" },
 ];
 
+interface Keys {
+  readonly publicKey: string;
+  readonly privateKey: string;
+}
+
+async function throwawayKeys(): Promise<Keys> {
+  const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+    "sign",
+    "verify",
+  ])) as CryptoKeyPair;
+  const base64 = (buffer: ArrayBuffer) =>
+    btoa(String.fromCharCode(...new Uint8Array(buffer)));
+  return {
+    publicKey: base64(await crypto.subtle.exportKey("raw", pair.publicKey)),
+    privateKey: base64(await crypto.subtle.exportKey("pkcs8", pair.privateKey)),
+  };
+}
+
+function stamp(date: Date): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
 /** A published list, issued `hoursAgo`, that puts Loom on `model`. */
-function publishedList(keys: Keys, hoursAgo: number, model: string) {
-  return signedList(keys, hoursAgo, {
+async function publishedList(keys: Keys, hoursAgo: number, model: string) {
+  const issued = new Date(Date.now() - hoursAgo * HOUR);
+  const payload = JSON.stringify({
+    schema: 1,
+    channel: "stable",
+    issued: stamp(issued),
+    expires: stamp(new Date(issued.getTime() + 30 * 24 * HOUR)),
+    evidence: "https://tryweave.io/evals/runs/scenario",
     default: { agents: { loom: { models: [model] } } },
   });
+  const body = (
+    await signModelRecommendations(payload, keys.privateKey)
+  )._unsafeUnwrap();
+  return { issued: stamp(issued), body };
+}
+
+/** The recommendations server: whatever list it holds now, and every GET. */
+class StubServer {
+  readonly requests: string[] = [];
+  body = "";
+  fetch = async (url: string): Promise<Response> => {
+    this.requests.push(url);
+    return new Response(this.body, {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        etag: `"${this.requests.length}"`,
+      },
+    });
+  };
 }
 
 /** Waits for a condition the plugin reaches in the background. */
@@ -52,9 +99,26 @@ async function eventually(check: () => Promise<boolean>): Promise<void> {
   }
 }
 
+async function removeTree(dir: string): Promise<void> {
+  await Bun.spawn(["rm", "-rf", dir], { stdout: "ignore", stderr: "ignore" })
+    .exited;
+}
+
 /** Runs `body` with an empty global config directory of its own. */
-function withGlobalDir<T>(body: (dir: string) => Promise<T>): Promise<T> {
-  return withGlobalDirNamed("weave-opencode2-model-updates", body);
+async function withGlobalDir<T>(body: (dir: string) => Promise<T>): Promise<T> {
+  const dir = join(
+    tmpdir(),
+    `weave-opencode2-model-updates-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  );
+  const previous = process.env.WEAVE_GLOBAL_CONFIG_DIR;
+  process.env.WEAVE_GLOBAL_CONFIG_DIR = dir;
+  try {
+    return await body(dir);
+  } finally {
+    if (previous === undefined) delete process.env.WEAVE_GLOBAL_CONFIG_DIR;
+    else process.env.WEAVE_GLOBAL_CONFIG_DIR = previous;
+    await removeTree(dir);
+  }
 }
 
 interface StatusReport {

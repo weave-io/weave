@@ -47,26 +47,6 @@ export const COMPOSE_REFRESH_TIMEOUT_MS = 1500;
 /** Compose stops waiting for the refresh after this (2 seconds). */
 export const COMPOSE_REFRESH_BUDGET_MS = 2000;
 
-/**
- * What compose lets a caller inject into its `ModelRecommendations`: the
- * parts that the refresh and the config loader can both honour. The cache
- * location (`WEAVE_GLOBAL_CONFIG_DIR`) and the cache file access are not
- * injectable here, because the loader reads `applied.json` through compose's
- * own filesystem; a refresh writing elsewhere would never be applied.
- */
-export interface ComposeModelRecommendationsDeps {
-  /** The subset of `fetch` the refresh uses. */
-  readonly fetch?: (url: string, init: RequestInit) => Promise<Response>;
-  /** The current time, for the throttle and for checking list dates. */
-  readonly now?: () => Date;
-  /** Ed25519 public keys that may sign lists; verifies fetched and applied lists. */
-  readonly publicKeys?: readonly string[];
-  /** Where lists are fetched from. Defaults as `ModelRecommendations` does. */
-  readonly baseUrl?: string;
-  /** Request timeout. Defaults to, and is capped at, `COMPOSE_REFRESH_TIMEOUT_MS`. */
-  readonly timeoutMs?: number;
-}
-
 /** The part of `ModelRecommendations` compose uses. */
 export interface ModelRecommendationsRefresher {
   refresh(request: RefreshRequest): ResultAsync<RefreshOutcome, RefreshError>;
@@ -209,6 +189,6 @@ function describeOutcome(outcome: RefreshOutcome): string | undefined {
   if (outcome.promoted !== undefined)
     return `Model recommendations issued ${outcome.promoted.issued} were applied; they take effect at the next session.`;
   if (outcome.type === "Downloaded")
-    return `Model recommendations issued ${outcome.issued} were downloaded and wait to be applied (mode notify).`;
+    return `Model recommendations issued ${outcome.issued} were downloaded; run \`weave models apply\` to use them.`;
   return undefined;
 }

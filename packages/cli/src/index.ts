@@ -16,6 +16,7 @@ export type { CliDeps } from "./cli.js";
 // CLI router
 // ---------------------------------------------------------------------------
 export { run } from "./cli.js";
+
 // ---------------------------------------------------------------------------
 // Error types
 // ---------------------------------------------------------------------------
@@ -29,12 +30,18 @@ export type {
   ValidationFailureError,
 } from "./errors.js";
 export { formatCliError } from "./errors.js";
+
 // ---------------------------------------------------------------------------
 // IO
 // ---------------------------------------------------------------------------
 export type { TerminalIO } from "./io/terminal.js";
 export { BufferTerminal, RealTerminal } from "./io/terminal.js";
-export type { ComposeModelRecommendationsDeps } from "./models/compose-refresh.js";
+export type { CliModelRecommendationsDeps } from "./models/recommendations-session.js";
+export type {
+  PromptAdapter,
+  PromptError,
+  PromptOption,
+} from "./prompt/index.js";
 export {
   LOGO_WIDTH,
   PLAIN_LOGO_LINES,

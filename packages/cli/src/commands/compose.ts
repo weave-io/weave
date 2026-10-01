@@ -14,26 +14,22 @@ import {
 import {
   type ConfigLoadDiagnostic,
   describeModelRecommendationsSkipReason,
-  loadConfigDetailed,
-  ModelRecommendations,
 } from "@weaveio/weave-config";
-import { formatError } from "@weaveio/weave-core";
 import { logger, materializeAgents } from "@weaveio/weave-engine";
 import { err, ok, type Result } from "neverthrow";
 import type { ParsedArgs } from "../args.js";
 import { type CliError, formatCliError } from "../errors.js";
-import {
-  BunFileSystem,
-  type FileSystem,
-  toConfigFileReader,
-} from "../fs/file-system.js";
+import { BunFileSystem, type FileSystem } from "../fs/file-system.js";
 import type { TerminalIO } from "../io/terminal.js";
 import {
   COMPOSE_REFRESH_TIMEOUT_MS,
-  type ComposeModelRecommendationsDeps,
   ComposeModelRefresh,
   describeComposeRefresh,
 } from "../models/compose-refresh.js";
+import {
+  type CliModelRecommendationsDeps,
+  RecommendationsSession,
+} from "../models/recommendations-session.js";
 import type { ThemeColors } from "../theme/colors.js";
 
 const log = logger.child({ module: "cli-compose" });
@@ -51,15 +47,15 @@ export interface ComposeContext {
    * `MemoryFileSystem` so `weave compose` can be driven without touching disk.
    */
   fs?: FileSystem;
+  /** The clock list dates and the refresh throttle are checked against. */
+  now?: () => Date;
   /**
-   * How model recommendations are fetched and verified (Spec 39): `fetch`,
-   * clock, public keys, base URL and timeout. Defaults to production
-   * behaviour, with the request timeout shortened to
-   * `COMPOSE_REFRESH_TIMEOUT_MS` because the Claude Code session-start hook
-   * waits for it. `publicKeys` and `now` also verify the applied list the
-   * config loads.
+   * Network and cache access for model recommendations (Spec 39), as for the
+   * `weave models` commands. The config loader reads the cache through the
+   * same files the refresh writes. Defaults to tryweave.io and the cache
+   * under the global config directory.
    */
-  modelRecommendations?: ComposeModelRecommendationsDeps;
+  modelRecommendations?: CliModelRecommendationsDeps;
 }
 
 function isSupportedAdapter(value: string): value is SupportedAdapter {
@@ -189,40 +185,15 @@ export async function runCompose(
   // 1. Load config. The harness ID selects Claude Code's section of any
   // applied model recommendations (Spec 39); without an opt-in it changes
   // nothing.
-  const recommendations = ctx.modelRecommendations ?? {};
-  const configResult = await loadConfigDetailed(
-    projectRoot,
-    toConfigFileReader(fs),
-    {
-      harness: "claude-code",
-      ...(recommendations.publicKeys === undefined
-        ? {}
-        : { publicKeys: recommendations.publicKeys }),
-      ...(recommendations.now === undefined
-        ? {}
-        : { now: recommendations.now }),
-    },
-  ).mapErr(
-    (errors): CliError => ({
-      type: "ParseFailure",
-      path: projectRoot,
-      errors: errors.flatMap((error) => {
-        if (error.type === "FileReadError")
-          return [`${error.path}: could not read config`];
-        if (error.type === "BuiltinParseError")
-          return error.errors.map((e) => `builtins:${formatError(e)}`);
-        if (error.type === "MergeError")
-          return error.errors.flatMap((e) =>
-            e.type === "ConfigValidationError"
-              ? e.errors.map(
-                  (issue) => `merge:${e.layer}:${formatError(issue)}`,
-                )
-              : [`merge:${e.type}:${e.error.type}`],
-          );
-        return error.errors.map((e) => `${error.path}:${formatError(e)}`);
-      }),
-    }),
+  // The request timeout is shortened because the Claude Code session-start
+  // hook waits for the refresh (step 8); see compose-refresh.ts.
+  const recommendations = new RecommendationsSession(
+    fs,
+    ctx.modelRecommendations,
+    ctx.now,
+    { timeoutMs: COMPOSE_REFRESH_TIMEOUT_MS },
   );
+  const configResult = await recommendations.load(projectRoot, "claude-code");
 
   if (configResult.isErr()) {
     terminal.stderr(formatCliError(configResult.error));
@@ -347,17 +318,9 @@ export async function runCompose(
   // is done and its output written, so a list fetched now applies at the next
   // compose: the next Claude Code session. Bounded, never fails the compose,
   // and silent on stdout; see compose-refresh.ts for why it is awaited.
-  const refresh = await new ComposeModelRefresh(
-    new ModelRecommendations({
-      ...recommendations,
-      // A shorter timeout (tests) is kept; a longer one would outlive the
-      // budget and keep the hook's process open, so it is capped.
-      timeoutMs: Math.min(
-        recommendations.timeoutMs ?? COMPOSE_REFRESH_TIMEOUT_MS,
-        COMPOSE_REFRESH_TIMEOUT_MS,
-      ),
-    }),
-  ).run(config.settings.model_updates);
+  const refresh = await new ComposeModelRefresh(recommendations.models).run(
+    config.settings.model_updates,
+  );
   const note = describeComposeRefresh(refresh);
   if (note !== undefined) terminal.stderr(note);
 

@@ -107,8 +107,11 @@ export interface ParsedArgs {
     init?: boolean;
     /** --bootstrap-dir <path> for `weave compose --init` — overrides default output path */
     bootstrapDir?: string;
-    /** models subcommand: `"check"` for `weave models check <file>` (the file is left in `rest`). */
-    modelsSubcommand?: "check";
+    /**
+     * models subcommand: `"check"` for `weave models check <file>` (the file
+     * is left in `rest`), or `status`, `update`, `apply`, `pin`.
+     */
+    modelsSubcommand?: "check" | "status" | "update" | "apply" | "pin";
     /** --envelope for `weave models check` — the file is a signed envelope */
     modelsEnvelope?: boolean;
     /** --expect <file> for `weave models check` — the expectations file */
@@ -582,9 +585,15 @@ export function parseArgs(argv: string[]): Result<ParsedArgs, ArgParseError> {
       }
     }
 
-    // models subcommands: "check"
+    // models subcommands: "check", "status", "update", "apply", "pin"
     if (command === "models" && flags.modelsSubcommand === undefined) {
-      if (arg === "check") {
+      if (
+        arg === "check" ||
+        arg === "status" ||
+        arg === "update" ||
+        arg === "apply" ||
+        arg === "pin"
+      ) {
         flags.modelsSubcommand = arg;
         continue;
       }

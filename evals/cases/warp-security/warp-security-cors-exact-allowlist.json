@@ -1,0 +1,32 @@
+{
+  "id": "warp-security-cors-exact-allowlist",
+  "description": "Change under review: let partner dashboards read account data from the browser. Added files are shown in full. For changed files, only the changed region is shown; the rest of the file is unchanged and compiles.\n\n`src/http/cors.ts` (added):\n```ts\n1 import type { Handler } from \"./types.js\";\n2\n3 const PARTNER_ORIGINS = new Set([\"https://acme.example.com\", \"https://globex.example.com\"]);\n4\n5 export function withCors(handler: Handler): Handler {\n6   return async (req) => {\n7     const origin = req.headers.get(\"origin\") ?? \"\";\n8     const res = req.method === \"OPTIONS\" ? new Response(null, { status: 204 }) : await handler(req);\n9     if (PARTNER_ORIGINS.has(origin)) {\n10       res.headers.set(\"Access-Control-Allow-Origin\", origin);\n11       res.headers.set(\"Access-Control-Allow-Credentials\", \"true\");\n12       res.headers.set(\"Access-Control-Allow-Headers\", \"content-type\");\n13       res.headers.set(\"Access-Control-Allow-Methods\", \"GET\");\n14     }\n15     res.headers.append(\"Vary\", \"Origin\");\n16     return res;\n17   };\n18 }\n```\n\n`src/server.ts` (changed, line 22):\n```ts\n22 router.get(\"/api/account/*\", withCors(accountRoutes));\n```\n\nThe two partner dashboards are run by the company itself on those exact origins. The account API authenticates with the `session` cookie (`Secure; HttpOnly; SameSite=None`), and the routes under `/api/account/` are read-only: `GET /api/account/profile` (name and email address) and `GET /api/account/invoices`.",
+  "suite": "warp-security",
+  "allowed_agents": [
+    "warp"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Approve the change: it allows credentialed cross-origin requests, but only for two exact, company-run origins checked with `Set.has`, it sends `Vary: Origin`, and the routes it opens are read-only, so no other site can read account data with a user's cookie. Non-blocking notes are acceptable; FINDING lines and a BLOCK verdict are not.",
+    "required_artifacts": [
+      "security_verdict_present",
+      "security_verdict_approve",
+      "security_blocker_count_capped"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "APPROVE"
+    }
+  ],
+  "tags": [
+    "security",
+    "judgment",
+    "guarded",
+    "approve",
+    "cors"
+  ]
+}
