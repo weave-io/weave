@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { modelRecommendationsCachePaths } from "@weaveio/weave-config";
 import { errAsync, okAsync } from "neverthrow";
 import { buildOpenCode2Catalog } from "../v2/catalog.js";
 import {
@@ -125,5 +126,61 @@ describe("CatalogSourceCache", () => {
       sourceIo: io,
     });
     expect(result._unsafeUnwrapErr().code).toBe("config_unavailable");
+  });
+});
+
+describe("model recommendations in the catalog (Spec 39)", () => {
+  const projectConfig = "/project/.weave/config.weave";
+  const applied = modelRecommendationsCachePaths("stable").applied;
+  const encode = (text: string) => new TextEncoder().encode(text);
+
+  async function build(files: ReadonlyMap<string, Uint8Array>) {
+    const result = await buildOpenCode2Catalog({
+      location: "/project",
+      projectConfig: true,
+      models: [],
+      skills: [],
+      sourceIo: new MemorySourceIo(files),
+    });
+    return result._unsafeUnwrap();
+  }
+
+  it("neither reads the cache nor reports an issue without an opt-in", async () => {
+    const catalog = await build(new Map());
+    expect(catalog.sources.map((source) => source.path)).not.toContain(applied);
+    expect(
+      catalog.issues.some(
+        (issue) => issue.code === "model_updates_unavailable",
+      ),
+    ).toBe(false);
+  });
+
+  it("records a missing applied.json as a source and reports the skipped layer", async () => {
+    const catalog = await build(
+      new Map([
+        [projectConfig, encode("settings { model_updates { mode auto } }")],
+      ]),
+    );
+    expect(catalog.sources).toContainEqual({ path: applied, exists: false });
+    expect(catalog.issues).toContainEqual({
+      code: "model_updates_unavailable",
+    });
+    expect(catalog.agents.has("loom")).toBe(true);
+  });
+
+  it("keeps every agent when applied.json is corrupt, and records its bytes", async () => {
+    const catalog = await build(
+      new Map([
+        [projectConfig, encode("settings { model_updates { mode notify } }")],
+        [applied, encode("{ torn")],
+      ]),
+    );
+    expect(catalog.issues).toContainEqual({
+      code: "model_updates_unavailable",
+    });
+    expect(
+      catalog.sources.find((source) => source.path === applied)?.exists,
+    ).toBe(true);
+    expect(catalog.agents.has("loom")).toBe(true);
   });
 });

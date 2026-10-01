@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 241 lib files | 30 env vars | 11 middleware | 9 events | 0% test coverage
-> **Token savings:** this file is ~21,900 tokens. Without it, AI exploration would cost ~80,300 tokens. **Saves ~58,400 tokens per conversation.**
-> **Last scanned:** 2026-10-01 15:01 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 244 lib files | 30 env vars | 11 middleware | 9 events | 0% test coverage
+> **Token savings:** this file is ~22,200 tokens. Without it, AI exploration would cost ~81,100 tokens. **Saves ~58,900 tokens per conversation.**
+> **Last scanned:** 2026-10-01 15:41 — re-run after significant changes
 
 ---
 
@@ -764,6 +764,10 @@
   - const BUILTIN_MODELS_ISSUED
   - const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>>
   - const BUILTIN_WEAVE_SOURCE
+- `packages/config/src/diagnostics.ts`
+  - function describeModelRecommendationsSkipReason: (reason) => string
+  - type ModelRecommendationsSkipReason
+  - type ConfigLoadDiagnostic
 - `packages/config/src/discovery.ts`
   - function globalConfigDir: () => string
   - function discoverAndParse: (projectRoot?, fileReader) => ResultAsync<DiscoveredConfig[], ConfigLoadError[]>
@@ -771,13 +775,30 @@
   - type DiscoveredConfig
   - const bunFileReader: FileReader
   - const GLOBAL_CONFIG_DIR_ENV
-- `packages/config/src/loader.ts` — function getResolvedBuiltinConfig: () => Result<, function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>
+- `packages/config/src/loader.ts`
+  - function getResolvedBuiltinConfig: () => Result<
+  - function loadConfig: (projectRoot?, fileReader) => ResultAsync<WeaveConfig, ConfigLoadError[]>
+  - function loadConfigDetailed: (projectRoot?, fileReader, options) => ResultAsync<LoadedConfig, ConfigLoadError[]>
+  - interface LoadConfigOptions
+  - interface LoadedConfig
 - `packages/config/src/merge.ts`
   - function mergeWorkflow: (workflowName, base, override, workflowMap, WorkflowConfig>) => Result<WorkflowConfig, WorkflowExtensionError>
   - function mergeConfigsResult: (...configs) => Result<WeaveConfig, MergeError[]>
   - function mergeConfigs: (...configs) => WeaveConfig
   - type WorkflowExtensionError
   - type MergeError
+- `packages/config/src/model-recommendations-cache.ts`
+  - function modelRecommendationsCachePaths: (channel, globalDir) => void
+  - function resolveModelUpdates: (settings) => ResolvedModelUpdates | undefined
+  - interface ModelRecommendationsCachePaths
+  - interface ResolvedModelUpdates
+  - const DEFAULT_MODEL_UPDATES_CHANNEL: ModelUpdatesChannel
+  - const MODEL_RECOMMENDATIONS_CACHE_DIR
+- `packages/config/src/model-recommendations-layer.ts`
+  - class ModelRecommendationsLayerReader
+  - interface ModelRecommendationsLayerDeps
+  - interface ModelRecommendationsLayerRequest
+  - interface ModelRecommendationsLayerResult
 - `packages/config/src/model-recommendations-verifier.ts`
   - function decodeBase64: (value) => Result<Uint8Array<ArrayBuffer>, string>
   - function encodeBase64: (bytes) => string
@@ -793,7 +814,7 @@
   - function selectRecommendationsSection: (file, harness) => SelectedRecommendationsSection | undefined
   - function isRecommendationsHarness: (value) => value is RecommendationsHarness
   - interface SelectedRecommendationsSection
-  - _...21 more_
+  - _...22 more_
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
 - `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
 - `packages/config/src/plan-task-parser.ts`
@@ -1279,7 +1300,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 244 test files found
+> 245 test files found
 
 ---
 

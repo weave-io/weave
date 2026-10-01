@@ -40,15 +40,15 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [x] 2.4 Key-generation and signing script for maintainers under `scripts/`, documented; the private key never enters the repository.
 - [x] 2.5 `weave models check <file> [--expect <file>] [--envelope]` validates a list (and verifies an envelope's signature), then resolves every section against the catalog fixtures of task 0.5, prints the chosen model per agent and provider, and with `--expect` fails on any mismatch. Exit codes documented in [CLI](../../cli.md). Also `--key`, `--issued-after` (the served list's `issued`, for the website's rollback check) and `--json`; the expectations format is in [CLI](../../cli.md#the-expectations-file).
 
-## 3. Loader layer — PR:
+## 3. Loader layer — PR: #PRNUM
 
-- [ ] 3.1 `loadConfig` reads the merged `model_updates.mode` before deciding to read the cache. With `off` or no block, output is identical to today's for every existing loader fixture (assert it).
-- [ ] 3.2 A verified `applied.json` becomes a layer of builtin-agent `models` only, merged between builtins and global. Tests: user entries first, then recommended, then builtin, duplicates removed; a recommended name that is not a builtin is skipped; `disable agents` still wins.
-- [ ] 3.3 A missing, unreadable, unsigned or invalid `applied.json` skips the layer, loads the rest, and returns the reason alongside the config for `validate` and adapters to report.
-- [ ] 3.4 Cache paths honour `WEAVE_GLOBAL_CONFIG_DIR`. File access goes through the injected reader, so tests use string fixtures.
-- [ ] 3.5 New `loadConfigDetailed(projectRoot, reader, { harness })` returning `{ config, diagnostics }`; `loadConfig` keeps its signature and returns `config`. It selects the harness's section, else `default`; no harness ID means no layer. OpenCode 2, Claude Code and Pi pass theirs.
-- [ ] 3.6 The Claude Code adapter accepts `opus`, `sonnet` and `haiku` as `models` entries and writes them through unchanged.
-- [ ] 3.7 [Config Loading](../../config-loading.md) describes the fourth layer; [Model Resolution](../../model-resolution.md#builtin-default-models) says how recommendations combine with the builtin defaults.
+- [x] 3.1 `loadConfig` reads the merged `model_updates.mode` before deciding to read the cache. With `off` or no block, output is identical to today's for every existing loader fixture (assert it).
+- [x] 3.2 A verified `applied.json` becomes a layer of builtin-agent `models` only, merged between builtins and global. Tests: user entries first, then recommended, then builtin, duplicates removed; a recommended name that is not a builtin is skipped; `disable agents` still wins.
+- [x] 3.3 A missing, unreadable, unsigned or invalid `applied.json` skips the layer, loads the rest, and returns the reason alongside the config for `validate` and adapters to report.
+- [x] 3.4 Cache paths honour `WEAVE_GLOBAL_CONFIG_DIR`. File access goes through the injected reader, so tests use string fixtures.
+- [x] 3.5 New `loadConfigDetailed(projectRoot, reader, { harness })` returning `{ config, diagnostics }`; `loadConfig` keeps its signature and returns `config`. It selects the harness's section, else `default`; no harness ID means no layer. OpenCode 2, Claude Code and Pi pass theirs. OpenCode 2's catalog passes `opencode2` and reports a skipped layer as `model_updates_unavailable` (the 6.3 issue code, landed early); `weave compose --adapter claude-code` passes `claude-code`. Pi's adapter source is outside this repository, so it adopts the API in 6b.2.
+- [x] 3.6 The Claude Code adapter accepts `opus`, `sonnet` and `haiku` as `models` entries and writes them through unchanged.
+- [x] 3.7 [Config Loading](../../config-loading.md) describes the fourth layer; [Model Resolution](../../model-resolution.md#builtin-default-models) says how recommendations combine with the builtin defaults. Also [Claude Code](../../adapters/claude-code.md#models) (tier entries) and [OpenCode 2 core](../../adapters/opencode2-core.md#model-recommendations).
 
 ## 4. Fetch and cache — PR:
 
@@ -68,7 +68,7 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 
 - [ ] 6.1 After the first catalog publish, and on refresh probes when the throttle is due, call `refresh()` without awaiting it in the refresh path. Never in `build`, so a catalog attempt's exact bytes stay deterministic.
 - [ ] 6.2 Test that `applied.json` appears in the catalog's source manifest (recorded as missing when absent) and that a promotion triggers the existing rebuild and reload. The spike showed no adapter change is needed: the loader reads it through the source cache's `FileReader`.
-- [ ] 6.3 `status` gains the optional bounded `modelUpdates` object and the `model_updates_unavailable` issue code; RPC schema tests updated.
+- [ ] 6.3 `status` gains the optional bounded `modelUpdates` object and the `model_updates_unavailable` issue code; RPC schema tests updated. The issue code and its RPC schema test landed with group 3 (#PRNUM); the `modelUpdates` object is still open.
 - [ ] 6.4 TUI notice when a reload changes an agent's resolved model because of an applied recommendation. Verify the notice mechanism live and record it in [OpenCode 2 core](../../adapters/opencode2-core.md).
 - [ ] 6.5 Adapter scenario in `tests/adapters/`: with `mode auto` and a stub fetch, a newly promoted file changes Loom's registered model after one refresh, with no restart; with `mode off`, no fetch happens.
 

@@ -7,6 +7,7 @@ export interface OpenCode2HealthIssue {
     | "model_unavailable"
     | "variant_unavailable"
     | "skill_unavailable"
+    | "model_updates_unavailable"
     | "agent_collision"
     | "config_invalid";
   readonly agentName?: string;

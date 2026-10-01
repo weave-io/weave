@@ -7,7 +7,14 @@
 
 import type { AgentDescriptor } from "@weaveio/weave-engine";
 
+/**
+ * Model IDs to the Claude Code tier written in agent frontmatter. A tier name
+ * maps to itself: it is already what Claude Code expects (Spec 39).
+ */
 const MODEL_ALIAS_MAP: Record<string, string> = {
+  opus: "opus",
+  sonnet: "sonnet",
+  haiku: "haiku",
   "claude-opus-5-5": "opus",
   "claude-sonnet-5-5": "sonnet",
   "claude-sonnet-5": "sonnet",

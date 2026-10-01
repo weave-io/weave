@@ -753,6 +753,10 @@
   - const BUILTIN_MODELS_ISSUED
   - const BUILTIN_PROMPT_CONTENTS: Readonly<Record<string, string>>
   - const BUILTIN_WEAVE_SOURCE
+- `packages/config/src/diagnostics.ts`
+  - function describeModelRecommendationsSkipReason: (reason) => string
+  - type ModelRecommendationsSkipReason
+  - type ConfigLoadDiagnostic
 - `packages/config/src/discovery.ts`
   - function globalConfigDir: () => string
   - function discoverAndParse: (projectRoot?, fileReader) => ResultAsync<DiscoveredConfig[], ConfigLoadError[]>
@@ -760,13 +764,30 @@
   - type DiscoveredConfig
   - const bunFileReader: FileReader
   - const GLOBAL_CONFIG_DIR_ENV
-- `packages/config/src/loader.ts` — function getResolvedBuiltinConfig: () => Result<, function loadConfig: (projectRoot?, fileReader) => ResultAsync<import("@weaveio/weave-core").WeaveConfig, ConfigLoadError[]>
+- `packages/config/src/loader.ts`
+  - function getResolvedBuiltinConfig: () => Result<
+  - function loadConfig: (projectRoot?, fileReader) => ResultAsync<WeaveConfig, ConfigLoadError[]>
+  - function loadConfigDetailed: (projectRoot?, fileReader, options) => ResultAsync<LoadedConfig, ConfigLoadError[]>
+  - interface LoadConfigOptions
+  - interface LoadedConfig
 - `packages/config/src/merge.ts`
   - function mergeWorkflow: (workflowName, base, override, workflowMap, WorkflowConfig>) => Result<WorkflowConfig, WorkflowExtensionError>
   - function mergeConfigsResult: (...configs) => Result<WeaveConfig, MergeError[]>
   - function mergeConfigs: (...configs) => WeaveConfig
   - type WorkflowExtensionError
   - type MergeError
+- `packages/config/src/model-recommendations-cache.ts`
+  - function modelRecommendationsCachePaths: (channel, globalDir) => void
+  - function resolveModelUpdates: (settings) => ResolvedModelUpdates | undefined
+  - interface ModelRecommendationsCachePaths
+  - interface ResolvedModelUpdates
+  - const DEFAULT_MODEL_UPDATES_CHANNEL: ModelUpdatesChannel
+  - const MODEL_RECOMMENDATIONS_CACHE_DIR
+- `packages/config/src/model-recommendations-layer.ts`
+  - class ModelRecommendationsLayerReader
+  - interface ModelRecommendationsLayerDeps
+  - interface ModelRecommendationsLayerRequest
+  - interface ModelRecommendationsLayerResult
 - `packages/config/src/model-recommendations-verifier.ts`
   - function decodeBase64: (value) => Result<Uint8Array<ArrayBuffer>, string>
   - function encodeBase64: (bytes) => string
@@ -782,7 +803,7 @@
   - function selectRecommendationsSection: (file, harness) => SelectedRecommendationsSection | undefined
   - function isRecommendationsHarness: (value) => value is RecommendationsHarness
   - interface SelectedRecommendationsSection
-  - _...21 more_
+  - _...22 more_
 - `packages/config/src/normalize-path.ts` — function normalizePath: (p) => string
 - `packages/config/src/plan-state-provider.ts` — class BunFilesystemPlanStateProvider
 - `packages/config/src/plan-task-parser.ts`

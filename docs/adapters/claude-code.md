@@ -34,6 +34,35 @@ support the plugin directory, agent files, and generated command files.
 Internal core/config/engine workspace layers remain bundled and are never
 consumer npm dependencies.
 
+## Models
+
+Each agent's `models` list is tried in order, and the first entry Claude Code
+can run is written to the agent's `model:` frontmatter as a tier. The allowlist
+is `CLAUDE_CODE_AVAILABLE_MODELS` in
+[`model-resolution.ts`](../../packages/adapters/claude-code/src/model-resolution.ts);
+`MODEL_ALIAS_MAP` in
+[`agent-translation.ts`](../../packages/adapters/claude-code/src/agent-translation.ts)
+maps a dashed Anthropic ID such as `claude-opus-5-5` to its tier.
+
+The tier names `opus`, `sonnet` and `haiku` are entries in their own right.
+Claude Code maps each tier to its current model, so the adapter treats them as
+always available and writes them through unchanged:
+
+```weave
+agent shuttle {
+  models ["sonnet"]
+}
+```
+
+They are what the `claude-code` section of the opt-in
+[model recommendations](../specs/39-spec-model-recommendations/39-spec-model-recommendations.md)
+names. `weave compose --adapter claude-code` loads config with
+`loadConfigDetailed(..., { harness: "claude-code" })`, so a user who opts in gets
+that section (else `default`) ahead of the builtin lists; a skipped file is
+logged and composition carries on with the builtins
+([Config Loading](../config-loading.md#the-recommendations-layer),
+[Model Resolution](../model-resolution.md#published-recommendations)).
+
 ## Commands
 
 The generated command files provide the plan-entry command only: `/weave:start`, with `/start-work` as a compatibility alias that behaves identically. Generated Claude Code markdown does not add a durable-workflow runtime surface, and it must not be read as one.
