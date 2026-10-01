@@ -1,0 +1,20 @@
+{
+  "id": "pattern-plan-flags-open-retention-decision",
+  "description": "Plan adding soft delete for projects. Deleting a project hides it everywhere, its owner can restore it from a new Recently deleted page, and a nightly job purges deleted projects for good once they have expired. Project files: `src/db/schema.ts` (the Drizzle schema, including the `projects` table), `drizzle/` (generated migrations), `src/projects/repository.ts` (every query on projects), `src/projects/routes.ts`, `src/web/pages/` (one file per page), `src/jobs/index.ts` (registers the nightly jobs) and `src/projects/__tests__/repository.test.ts`. Available commands (from package.json scripts): `bun run db:generate`, `bun test`, `bun run typecheck`.",
+  "suite": "pattern-planning",
+  "allowed_agents": [
+    "pattern"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "The plan treats how long a deleted project is kept before it is purged as an open decision: it does not present a retention period as settled, but records the period it assumes as an assumption and names it as a decision for the caller to confirm before execution.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "planning",
+    "judge-scored",
+    "assumptions"
+  ]
+}

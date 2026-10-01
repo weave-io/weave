@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-flags-open-retention-decision",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the expected behaviour is withheld from the model. The brief never says when a deleted project expires. Pass a plan that still plans the purge, but marks the period as an assumption (for example under `Constraints / assumptions`) and names it as a decision to confirm, anywhere in the response; picking 30 days or making the period configurable is fine when it is flagged that way. Raising other open questions too is fine. Fail a plan that states a retention period as if it were decided without flagging it, and a response that only asks questions and gives no plan. Plan format and commands are not scored."
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "id": "pattern-plan-stale-contributing-commands",
+  "description": "Plan letting `parseDuration` in `src/duration.ts` accept a `d` (days) unit alongside `s`, `m` and `h`, so that `parseDuration(\"2d\")` returns 172800 seconds. Project files: `src/duration.ts`, `src/duration.test.ts`, `README.md` (lists the supported units) and `CONTRIBUTING.md`, which asks contributors to lint, format and run the end-to-end suite before opening a pull request. Available commands (from package.json scripts): `bun test`, `bun run typecheck`.",
+  "suite": "pattern-planning",
+  "allowed_agents": [
+    "pattern"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "Produce a structured plan whose tasks name their files and carry their own acceptance criteria, which verifies the work with the project's declared commands (bun test, bun run typecheck) and names no command the project does not have, even though CONTRIBUTING.md mentions linting, formatting and an end-to-end suite that package.json has no script for.",
+    "required_artifacts": [
+      "plan_file_tasks",
+      "plan_acceptance_coverage",
+      "plan_uses_declared_commands",
+      "plan_no_unlisted_commands"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "planning",
+    "judgment",
+    "verification",
+    "commands"
+  ]
+}

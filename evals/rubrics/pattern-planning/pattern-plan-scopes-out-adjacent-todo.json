@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-scopes-out-adjacent-todo",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the expected behaviour is withheld from the model. Pass a plan that fixes the offset (to `(page - 1) * size` or equivalent) and does nothing about cursor pagination beyond, at most, naming it as out of scope or a follow-up. A regression test, a boundary check for page 1 or the last page, and reading the callers to confirm they need no change are all fine. Fail a plan with a task that implements cursor pagination, changes the signature or return shape of `paginate()`, or edits `src/api/users.ts` or `src/api/orders.ts`. Plan format and commands are not scored."
+  }
+}

@@ -3054,6 +3054,52 @@ describe("Pattern plans a change", () => {
     expect(invented.firstCase?.passed).toBe(false);
   });
 
+  it.each([
+    [
+      "an undeclared command chained after a declared one",
+      "- [ ] `bun test && bun run lint` passes",
+      false,
+    ],
+    [
+      "an undeclared chained command inside a fence",
+      [
+        "- [ ] `bun test` passes",
+        "```bash",
+        "cd app && bun run lint",
+        "```",
+      ].join("\n"),
+      false,
+    ],
+    [
+      "an undeclared script named in plain prose",
+      "- [ ] `bun test` passes, then run bun run lint before pushing.",
+      false,
+    ],
+    [
+      "a package runner named in plain prose",
+      "- [ ] `bun test` passes; format with bunx prettier.",
+      false,
+    ],
+    [
+      "a chain of declared commands",
+      "- [ ] `bun install && bun test` passes",
+      true,
+    ],
+    [
+      "prose that only mentions linting, with no command",
+      "- [ ] `bun test` passes; the project has no lint script, so skip it.",
+      true,
+    ],
+  ])("reads a plan with %s for what it is", async (_shape, text, passes) => {
+    const run = await produces(
+      probe,
+      ["plan_uses_declared_commands", "plan_no_unlisted_commands"],
+      text as string,
+    );
+
+    expect(run.firstCase?.passed).toBe(passes as boolean);
+  });
+
   it("names the structure it wants, and withholds the signal names on a judgment case", async () => {
     const structural = await withEvalFixtures(
       [{ ...probe.fixture, tags: ["planning"] }],
@@ -3156,6 +3202,67 @@ describe("Pattern plans a change", () => {
     );
 
     expect(run.firstCase?.passed).toBe(false);
+  });
+});
+
+describe("Pattern plans a change the judge scores for the behaviour it must show", () => {
+  const probe = only("pattern-planning")[0]?.[1] as SuiteProbe;
+  const fixture: FixtureSpec = {
+    ...probe.fixture,
+    id: "pattern-reuses-the-throttle",
+    description:
+      "Plan limiting failed logins. `src/lib/throttle.ts` exports `throttle(options)`. Available commands: `bun test`.",
+    expectedOutcome: {
+      kind: "task_completion",
+      description:
+        "The plan builds the limit on the existing `throttle` middleware.",
+      required_artifacts: [],
+    },
+    tags: ["planning", "judge-scored"],
+  };
+
+  async function runWith(judgePasses: boolean) {
+    return withEvalFixtures([fixture], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "pattern-planning",
+        answers: [probe.goodAnswer],
+        rawArtifacts: true,
+        judgeOutput: {
+          score: judgePasses ? 0.97 : 0.2,
+          rationale: "judge rationale",
+        },
+      }),
+    );
+  }
+
+  it("hands the model the brief without the behaviour it expects", async () => {
+    const run = await runWith(true);
+    const asked = run.rawArtifacts[0]?.transcript[0]?.content ?? "";
+
+    expect(asked).toContain("`src/lib/throttle.ts` exports");
+    expect(asked).not.toContain("existing `throttle` middleware");
+    expect(asked).toContain("Required structural signals: none");
+  });
+
+  it("asks the judge whether the plan reaches the case's expected outcome", async () => {
+    const run = await runWith(true);
+    const call = run.judgeCalls.find(
+      (c) => c.dimension === "executionCompleteness",
+    );
+
+    expect(call?.response).toBe(probe.goodAnswer);
+    expect(call?.criteria.map((c) => c.question)).toEqual([
+      "Does the response achieve the expected outcome: The plan builds the limit on the existing `throttle` middleware.?",
+    ]);
+  });
+
+  it("lets the judge's verdict decide, so a well-formed plan that misses the behaviour can fail", async () => {
+    const passed = await runWith(true);
+    const failed = await runWith(false);
+
+    expect(passed.firstCase?.passed).toBe(true);
+    expect(failed.firstCase?.passed).toBe(false);
   });
 });
 

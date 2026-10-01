@@ -1,0 +1,20 @@
+{
+  "id": "pattern-plan-scopes-out-adjacent-todo",
+  "description": "Plan fixing a bug in `paginate()` in `src/api/paginate.ts`: page 2 repeats the last item of page 1, because the offset is computed as `(page - 1) * size - 1`. The file starts with the comment `// TODO: switch to cursor pagination, offsets are slow on large tables`. `paginate()` is called from `src/api/users.ts` and `src/api/orders.ts`, and its tests are in `src/api/__tests__/paginate.test.ts`. Available commands (from package.json scripts): `bun test`.",
+  "suite": "pattern-planning",
+  "allowed_agents": [
+    "pattern"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "The plan fixes the offset calculation and keeps the cursor-pagination TODO out of scope: no task switches to cursor pagination or changes how `src/api/users.ts` and `src/api/orders.ts` call `paginate()`.",
+    "required_artifacts": []
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "planning",
+    "judge-scored",
+    "scope"
+  ]
+}

@@ -9,9 +9,9 @@
 - `GITHUB_STEP_SUMMARY` **required** — scripts/proof/opencode2-live/main.ts
 - `HOME` **required** — packages/cli/src/__tests__/file-system.test.ts
 - `LOG_LEVEL` **required** — packages/cli/src/main.ts
-- `OPENROUTER_API_KEY` **required** — packages/adapters/opencode/src/trajectory/__tests__/opencode-trajectory-runner.live.test.ts
+- `OPENROUTER_API_KEY` (has default) — eval-bundles/slots/pp/judge.ts
 - `PATH` (has default) — scripts/proof/opencode2-live/host.ts
-- `PWD` (has default) — packages/adapters/opencode/dist-types/adapter.d.ts
+- `PWD` (has default) — packages/adapters/opencode/src/adapter.ts
 - `RUN_HARNESS_SMOKE` **required** — packages/adapters/opencode/src/__tests__/category-routing-smoke.test.ts
 - `SITE_URL` (has default) — packages/docs/astro.config.mjs
 - `USERPROFILE` **required** — packages/cli/src/__tests__/file-system.test.ts

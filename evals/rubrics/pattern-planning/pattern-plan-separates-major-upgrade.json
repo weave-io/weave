@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-separates-major-upgrade",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the expected behaviour is withheld from the model. Pass a plan in which upgrading `@acme/ui` and dealing with the major release's breaking changes in the existing components (reading the changelog or migration guide, fixing what typecheck and tests report) is its own task or tasks, with acceptance that can be checked before the picker exists (for example typecheck and tests pass on 5.x), and the booking-form task depends on it. Splitting the upgrade further is fine. Fail a plan that bundles the upgrade and the booking-form change into one task, that bumps the version without any step for the existing usages, or that orders the booking-form task first. Plan format and commands are not scored."
+  }
+}

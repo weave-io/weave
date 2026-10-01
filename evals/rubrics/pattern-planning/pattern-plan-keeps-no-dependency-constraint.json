@@ -1,0 +1,10 @@
+{
+  "case_id": "pattern-plan-keeps-no-dependency-constraint",
+  "suite": "pattern-planning",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judge-scored case: the expected behaviour is withheld from the model. Pass a plan that writes the CSV with the project's own code (for example a small serializer in `src/lib/`) and adds no runtime package. Touching `package.json` only to read it, or adding nothing to it, is fine; quoting and escaping customer names, and checking the bundle size with `bun run build`, are welcome but not required. Fail a plan that adds a runtime dependency (`papaparse`, `csv-stringify`, `fast-csv` or any other), or that offers adding one as its chosen path. Plan format and commands are not scored."
+  }
+}
