@@ -100,6 +100,14 @@ describe("harness detection", () => {
     ]);
   });
 
+  it("does not treat an opencode binary with no readable version as OpenCode 1", async () => {
+    const probes = new MemoryDetectionProbes({
+      binaries: { opencode: "/bin/opencode" },
+    });
+    const result = await detectHarnesses(probes);
+    expect(result._unsafeUnwrap()).toEqual([]);
+  });
+
   it("BunDetectionProbes finds a binary on PATH", async () => {
     const result = await new BunDetectionProbes().binaryOnPath("bun");
     expect(result._unsafeUnwrap()).toBe(Bun.which("bun") ?? undefined);
@@ -135,6 +143,7 @@ describe("harness detection", () => {
   it("detects PATH-binary-only harnesses", async () => {
     const probes = new MemoryDetectionProbes({
       binaries: { opencode: "/bin/opencode" },
+      versions: { opencode: "1.18.33" },
     });
     const result = await detectHarnesses(probes);
     const opencode = result._unsafeUnwrap()[0];

@@ -260,7 +260,7 @@
   - _...1 more_
 - `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
-  - function installHarnesses: (input) => Promise<number>
+  - function installHarnesses: (input) => Promise<
   - interface InitContext
 - `packages/cli/src/commands/migrate.ts`
   - function renderMigrateSuccess: (theme, plan, result) => string

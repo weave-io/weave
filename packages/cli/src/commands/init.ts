@@ -77,7 +77,9 @@ export async function runInit(
   // Explicit migrate submode: weave init migrate [--scope ...] [--yes]
   if (ctx.flags.initSubmode === "migrate") {
     return runMigrateMode({ ...ctx, fs, prompt }, (plan, harnesses) =>
-      installHarnesses({ ctx, fs, plan, harnesses }),
+      installHarnesses({ ctx, fs, plan, harnesses }).then(
+        (outcome) => outcome.exitCode,
+      ),
     );
   }
 
@@ -108,7 +110,7 @@ export async function runInit(
     return ok(1);
   }
 
-  const installExit = await installHarnesses({
+  const install = await installHarnesses({
     ctx,
     fs,
     plan: planResult.plan,
@@ -119,10 +121,10 @@ export async function runInit(
       ctx.theme,
       scaffold.value,
       harnesses,
-      planResult.plan.selectedHarnesses.length > 0,
+      install.installed > 0,
     ),
   );
-  return ok(installExit);
+  return ok(install.exitCode);
 }
 
 // ---------------------------------------------------------------------------
@@ -511,12 +513,13 @@ export async function installHarnesses(input: {
   fs: FileSystem;
   plan: InitPlan;
   harnesses: DetectedHarness[];
-}): Promise<number> {
+}): Promise<{ exitCode: number; installed: number }> {
   const { ctx, fs, plan, harnesses } = input;
-  if (plan.selectedHarnesses.length === 0) return 0;
+  if (plan.selectedHarnesses.length === 0) return { exitCode: 0, installed: 0 };
 
   const registry = installerRegistry(fs, () => composeClaudeCode(ctx, fs));
   let exitCode = 0;
+  let installed = 0;
 
   for (const harnessId of plan.selectedHarnesses) {
     const installer = registry[harnessId];
@@ -553,10 +556,11 @@ export async function installHarnesses(input: {
       exitCode = 1;
       continue;
     }
+    installed += 1;
     ctx.terminal.stdout(result.value.messages.join("\n"));
   }
 
-  return exitCode;
+  return { exitCode, installed };
 }
 
 function composeClaudeCode(

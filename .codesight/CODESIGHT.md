@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 230 lib files | 30 env vars | 11 middleware | 9 events | 0% test coverage
 > **Token savings:** this file is ~20,900 tokens. Without it, AI exploration would cost ~77,400 tokens. **Saves ~56,500 tokens per conversation.**
-> **Last scanned:** 2026-10-01 02:54 — re-run after significant changes
+> **Last scanned:** 2026-10-01 03:12 — re-run after significant changes
 
 ---
 
@@ -271,7 +271,7 @@
   - _...1 more_
 - `packages/cli/src/commands/init.ts`
   - function runInit: (ctx) => Promise<Result<number, CliError>>
-  - function installHarnesses: (input) => Promise<number>
+  - function installHarnesses: (input) => Promise<
   - interface InitContext
 - `packages/cli/src/commands/migrate.ts`
   - function renderMigrateSuccess: (theme, plan, result) => string

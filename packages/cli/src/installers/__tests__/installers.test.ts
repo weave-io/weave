@@ -63,6 +63,38 @@ describe("harness installers", () => {
     ]);
   });
 
+  it("removes the legacy entry when the adapter is already listed", async () => {
+    const path = "/project/opencode.json";
+    const fs = new MemoryFileSystem(
+      {
+        [path]:
+          '{ "plugin": ["@weaveio/weave-adapter-opencode@0.2.0", "@opencode_weave/weave"] }\n',
+      },
+      "/project",
+      "/home/user",
+    );
+    const result = await new OpenCodeInstaller(fs, "0.2.0").install(local);
+    expect(result._unsafeUnwrap().messages[0]).toContain(
+      "Removed the legacy plugin entry @opencode_weave/weave",
+    );
+    expect(JSON.parse(fs.snapshot()[path] ?? "{}").plugin).toEqual([
+      "@weaveio/weave-adapter-opencode@0.2.0",
+    ]);
+  });
+
+  it("keeps an adapter entry that names the plugin subpath", async () => {
+    const path = "/project/opencode.json";
+    const source = '{ "plugin": ["@weaveio/weave-adapter-opencode/plugin"] }\n';
+    const fs = new MemoryFileSystem(
+      { [path]: source },
+      "/project",
+      "/home/user",
+    );
+    const result = await new OpenCodeInstaller(fs, "0.2.0").install(local);
+    expect(result._unsafeUnwrap().changed).toBe(false);
+    expect(fs.snapshot()[path]).toBe(source);
+  });
+
   it("adds both OpenCode generations' entries to one shared config file", async () => {
     const path = "/project/opencode.json";
     const fs = new MemoryFileSystem({ [path]: "{}" }, "/project", "/home/user");

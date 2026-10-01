@@ -7,21 +7,18 @@
  * a process exit. No business logic lives here.
  */
 
-import { logDestination, logger } from "@weaveio/weave-engine";
-import { run } from "./cli.js";
-
 // Command output goes to stdout, so `weave prompt inspect --json > file` and
 // other piped commands stay parseable. Engine logs go to stderr, and only
-// warnings unless LOG_LEVEL asks for more.
+// warnings unless LOG_LEVEL asks for more. LOG_LEVEL is set before the engine
+// and config loggers load, because their child loggers keep the level they
+// were created with.
+if (Bun.env.LOG_LEVEL === undefined) Bun.env.LOG_LEVEL = "warn";
+
+const { logDestination } = await import("@weaveio/weave-engine");
 if (Bun.env.WEAVE_LOG_FILE === undefined)
   logDestination.redirectTo(process.stderr);
-if (Bun.env.LOG_LEVEL === undefined) {
-  // Commands load `@weaveio/weave-config` lazily; its logger reads LOG_LEVEL
-  // when it is first imported.
-  Bun.env.LOG_LEVEL = "warn";
-  logger.level = "warn";
-}
 
+const { run } = await import("./cli.js");
 const result = await run();
 
 result.match(
@@ -32,3 +29,5 @@ result.match(
     process.exitCode = 1;
   },
 );
+
+export {};

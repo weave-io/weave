@@ -202,6 +202,7 @@ describe("init command", () => {
     expect(terminal.out.join("\n")).toContain(
       "Skipped pi: Weave for pi is not published yet.",
     );
+    expect(terminal.out.join("\n")).toContain("Add Weave to a harness");
   });
 
   it("installs explicitly selected OpenCode 2 at local scope without prior detection", async () => {

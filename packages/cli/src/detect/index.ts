@@ -60,13 +60,14 @@ function majorVersion(version: string | undefined): number | undefined {
 
 const HARNESS_PROBES: HarnessProbe[] = [
   {
-    // `@opencode/cli` (OpenCode 2) also links an `opencode` binary; only a
-    // 1.x `opencode` is OpenCode 1.
+    // `@opencode/cli` (OpenCode 2) also links an `opencode` binary; only an
+    // `opencode` that reports 1.x is OpenCode 1. An unreadable version is not
+    // enough to install the OpenCode 1 adapter.
     id: "opencode",
     configPaths: openCodeConfigPaths,
     binary: "opencode",
     requiresBinary: true,
-    acceptsVersion: (version) => (majorVersion(version) ?? 1) < 2,
+    acceptsVersion: (version) => majorVersion(version) === 1,
   },
   {
     id: "opencode2",

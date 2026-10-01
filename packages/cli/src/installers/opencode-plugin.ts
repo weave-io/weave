@@ -56,10 +56,15 @@ function entryPackage(value: unknown): string | undefined {
   return typeof name === "string" ? name : undefined;
 }
 
+/** Whether an entry names the package, with or without a version or subpath. */
 function namesPackage(value: unknown, packageName: string): boolean {
   const name = entryPackage(value);
   if (name === undefined) return false;
-  return name === packageName || name.startsWith(`${packageName}@`);
+  return (
+    name === packageName ||
+    name.startsWith(`${packageName}@`) ||
+    name.startsWith(`${packageName}/`)
+  );
 }
 
 export function openCodeConfigCandidates(
@@ -85,6 +90,8 @@ type Edit = {
   readonly contents: string;
   readonly changed: boolean;
   readonly replaced?: string;
+  /** The adapter was already listed, so the legacy entry was only removed. */
+  readonly removedOnly?: boolean;
 };
 
 export class OpenCodePluginInstaller implements HarnessInstaller {
@@ -139,7 +146,7 @@ export class OpenCodePluginInstaller implements HarnessInstaller {
   ): ResultAsync<InstallResult, InstallError> {
     const edited = this.edit(source, path);
     if (edited.isErr()) return errAsync(edited.error);
-    const { contents, changed, replaced } = edited.value;
+    const { contents, changed, replaced, removedOnly } = edited.value;
     if (!changed) {
       return okAsync({
         harness: this.target.harness,
@@ -147,10 +154,14 @@ export class OpenCodePluginInstaller implements HarnessInstaller {
         messages: [`${this.target.label} plugin already configured in ${path}`],
       });
     }
-    const messages = [
-      `Configured ${this.target.label} plugin in ${path}: ${this.specifier()}`,
-    ];
-    if (replaced !== undefined)
+    const messages = removedOnly
+      ? [
+          `Removed the legacy plugin entry ${replaced} from ${path}; the Weave adapter is already listed.`,
+        ]
+      : [
+          `Configured ${this.target.label} plugin in ${path}: ${this.specifier()}`,
+        ];
+    if (replaced !== undefined && !removedOnly)
       messages.push(`Replaced the legacy plugin entry ${replaced}`);
     messages.push(
       `Restart ${this.target.label}; it installs the plugin on start.`,
@@ -200,41 +211,64 @@ export class OpenCodePluginInstaller implements HarnessInstaller {
     if (entries !== undefined && !Array.isArray(entries)) {
       return err(this.failure(path, `${key} must be an array`));
     }
-    if (
-      Array.isArray(entries) &&
-      entries.some((entry) => namesPackage(entry, this.target.packageName))
-    )
+    const list: unknown[] = Array.isArray(entries) ? entries : [];
+    const installed = list.some((entry) =>
+      namesPackage(entry, this.target.packageName),
+    );
+    const legacyIndex = list.findIndex((entry) =>
+      (this.target.replaces ?? []).some((name) => namesPackage(entry, name)),
+    );
+    const replaced =
+      legacyIndex >= 0 ? entryPackage(list[legacyIndex]) : undefined;
+    if (installed && legacyIndex < 0)
       return ok({ contents: source, changed: false });
 
-    const legacyIndex = Array.isArray(entries)
-      ? entries.findIndex((entry) =>
-          (this.target.replaces ?? []).some((name) =>
-            namesPackage(entry, name),
-          ),
-        )
-      : -1;
-    const replaced = Array.isArray(entries)
-      ? entryPackage(entries[legacyIndex])
-      : undefined;
-    const target = Array.isArray(entries)
-      ? [key, legacyIndex >= 0 ? legacyIndex : entries.length]
-      : [key];
-    const value = Array.isArray(entries)
-      ? this.specifier()
-      : [this.specifier()];
-    const edits = modify(source, target, value, {
+    // The legacy plugin and the adapter must not both load: replace the
+    // legacy entry, or remove it when the adapter is already listed.
+    const edit = this.editFor(entries, legacyIndex, installed);
+    const edits = modify(source, edit.path, edit.value, {
       formattingOptions: {
         insertSpaces: true,
         tabSize: 2,
         eol: source.includes("\r\n") ? "\r\n" : "\n",
       },
-      ...(legacyIndex >= 0 ? {} : { isArrayInsertion: true }),
+      ...(edit.insert ? { isArrayInsertion: true } : {}),
     });
     return ok({
       contents: applyEdits(source, edits),
       changed: true,
       ...(replaced === undefined ? {} : { replaced }),
+      ...(installed ? { removedOnly: true } : {}),
     });
+  }
+
+  private editFor(
+    entries: unknown,
+    legacyIndex: number,
+    installed: boolean,
+  ): { path: (string | number)[]; value: unknown; insert: boolean } {
+    const key = this.target.key;
+    if (!Array.isArray(entries))
+      return { path: [key], value: [this.specifier()], insert: false };
+    // Rewrite the array rather than delete one element: jsonc-parser's
+    // element removal corrupts a single-line array when the last element goes.
+    if (legacyIndex >= 0 && installed)
+      return {
+        path: [key],
+        value: entries.filter((_entry, index) => index !== legacyIndex),
+        insert: false,
+      };
+    if (legacyIndex >= 0)
+      return {
+        path: [key, legacyIndex],
+        value: this.specifier(),
+        insert: false,
+      };
+    return {
+      path: [key, entries.length],
+      value: this.specifier(),
+      insert: true,
+    };
   }
 
   private failure(path: string, cause: unknown): InstallError {
