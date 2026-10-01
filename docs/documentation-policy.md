@@ -42,6 +42,7 @@ Non-normative artifacts are evidence that a spec was implemented correctly. They
 **Rules for non-normative artifacts:**
 
 - Must not be updated to reflect system changes — they are historical snapshots.
+- Exception: a task-tracking file (`<N>-tasks*.md`) records progress while its spec is being implemented. Ticking a box, adding the PR number that did the work, or a one-line note on what is still open is expected in the same PR as the work (as in Specs 37, 38 and 39). Earlier entries are not rewritten, and once the spec is complete the file is a snapshot like any other artifact.
 - Must not contain secrets, API keys, tokens, real user paths, or private prompt content.
 - May remain in their original spec directory when they are tightly coupled to that spec's proof record.
 - New specs should place proof artifacts in `docs/artifacts/` rather than mixing them with durable spec content.
