@@ -11,7 +11,7 @@ Task tracking for [Spec 39](39-spec-model-recommendations.md). Non-normative: ti
 
 **Order and dependencies:** 1 → 2 → 3 → 4 → 5 → 6 → 8. Group 7 (website) needs group 2's `weave models check` released on `next`, and may land any time after that. Group 8 needs groups 6 and 7, or a locally served signed file. Group 0 runs alongside: the feature can ship without it, but no list that changes a model is published until group 0's blocking gaps are closed for that agent.
 
-## 0. Eval readiness — PRs: #280, #281, #283, #284
+## 0. Eval readiness — PRs: #280, #281, #282, #283, #284
 
 The gaps are described, with evidence, in the [eval readiness record](../../artifacts/eval-readiness-model-recommendations.md). One PR per task; 0.1, 0.2, 0.4 and 0.6 first.
 
@@ -19,7 +19,7 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [x] 0.2 (G2) A model comparison over one bundle: candidate against current, per suite, with equal repeat counts, Fisher's exact test and Holm adjustment, the per-case guard (a case at ≥ 80% on current that falls below 60% on the candidate fails), and the cost difference. Tests with fixture bundles, including the Spindle 29 Sep shape (suite-level p ≈ 0.17, one case 8/8 → 4/8). #284: `weave eval compare-models` (text track only).
 - [ ] 0.3 (G3) Grow suites to at least 12 text cases, one PR per suite, with rubrics: shuttle-execution (+9), weft-review (+8), spindle-tools (+10), warp-security (+8), pattern-planning (+8), tapestry-execution (+8). Shuttle and Weft first. Cover failure modes from the [session audit](../../artifacts/session-audit-2026-09.md). This picks up Spec 37 task 19.2.
 - [x] 0.4 (G4) Every trajectory case's `allowed_models` includes every `default: true` model in `evals/model-matrix.json`, enforced by a test. A candidate must be a default model in the matrix before it is evaluated, so adding it there makes it runnable on every trajectory case. #280.
-- [ ] 0.5 (G5) Catalog fixtures for Copilot, Anthropic, OpenAI, OpenRouter and Copilot + OpenAI, used by `weave models check` (task 2.5) to print and check each section's resolution.
+- [x] 0.5 (G5) Catalog fixtures for Copilot, Anthropic, OpenAI, OpenRouter and Copilot + OpenAI, used by `weave models check` (task 2.5) to print and check each section's resolution. #282: `packages/cli/src/models/catalogs/`, bundled into the CLI.
 - [x] 0.6 (G6) Store prompt and completion tokens per attempt in the score file, and report cost per attempt per model at the matrix's prices. #283: cost in local score files only, not the public report.
 - [ ] 0.7 (G7) Publish the candidate run through the CI eval workflow so the file's `evidence` link resolves; needs the credit top-up planned in Spec 38 task 10.2.
 - [ ] 0.8 (G8) A tier table in the evidence for Claude Code sections, and a check that each tier's measured model is in the eval matrix.
@@ -32,13 +32,13 @@ The gaps are described, with evidence, in the [eval readiness record](../../arti
 - [x] 1.3 Merge tests: project `mode off` overrides global `mode auto`; an omitted project block keeps the global one.
 - [x] 1.4 [DSL reference](../../dsl-reference.md) documents the block; marked as having no effect until group 3 lands.
 
-## 2. File format and signature — PR:
+## 2. File format and signature — PR: #282
 
-- [ ] 2.1 `ModelRecommendationsFile` Zod schema in `@weaveio/weave-config`, matching [the field table](39-spec-model-recommendations.md#the-published-file), inside the `{ payload, sig }` envelope: required `default`, `evidence` and `expires`; freshness rules (rollback, 24-hour future skew, `BUILTIN_MODELS_ISSUED` baseline, expiry) with an injected clock; optional `harnesses` keyed `opencode2`, `claude-code`, `pi`; `claude-code` entries limited to `opus`, `sonnet`, `haiku`; the 64 KiB and count limits.
-- [ ] 2.2 Ed25519 verification with `crypto.subtle` over the exact file bytes, against a list of embedded public keys. Confirm Bun's WebCrypto supports Ed25519 verify; record the Bun version in the PR.
-- [ ] 2.3 Typed error union (for example `SignatureInvalid`, `SchemaInvalid`, `ChannelMismatch`, `ClientTooOld`, `TooLarge`). Fixtures for each, plus a valid fixture signed with a test-only key.
-- [ ] 2.4 Key-generation and signing script for maintainers under `scripts/`, documented; the private key never enters the repository.
-- [ ] 2.5 `weave models check <file> [--expect <file>] [--envelope]` validates a list (and verifies an envelope's signature), then resolves every section against the catalog fixtures of task 0.5, prints the chosen model per agent and provider, and with `--expect` fails on any mismatch. Exit codes documented in [CLI](../../cli.md).
+- [x] 2.1 `ModelRecommendationsFile` Zod schema in `@weaveio/weave-config`, matching [the field table](39-spec-model-recommendations.md#the-published-file), inside the `{ payload, sig }` envelope: required `default`, `evidence` and `expires`; freshness rules (rollback, 24-hour future skew, `BUILTIN_MODELS_ISSUED` baseline, expiry) with an injected clock; optional `harnesses` keyed `opencode2`, `claude-code`, `pi`; `claude-code` entries limited to `opus`, `sonnet`, `haiku`; the 64 KiB and count limits.
+- [x] 2.2 Ed25519 verification with `crypto.subtle` over the exact file bytes, against a list of embedded public keys. Confirm Bun's WebCrypto supports Ed25519 verify; record the Bun version in the PR. Bun 1.4.2.
+- [x] 2.3 Typed error union (for example `SignatureInvalid`, `SchemaInvalid`, `ChannelMismatch`, `ClientTooOld`, `TooLarge`). Fixtures for each, plus a valid fixture signed with a test-only key.
+- [x] 2.4 Key-generation and signing script for maintainers under `scripts/`, documented; the private key never enters the repository.
+- [x] 2.5 `weave models check <file> [--expect <file>] [--envelope]` validates a list (and verifies an envelope's signature), then resolves every section against the catalog fixtures of task 0.5, prints the chosen model per agent and provider, and with `--expect` fails on any mismatch. Exit codes documented in [CLI](../../cli.md). Also `--key` and `--json`; the expectations format is in [CLI](../../cli.md#the-expectations-file).
 
 ## 3. Loader layer — PR:
 
