@@ -17,6 +17,7 @@ See [Documentation Policy](../documentation-policy.md) for the full classificati
 - [`eval-baseline-2026-09-24.md`](eval-baseline-2026-09-24.md) — Spec 37 tasks 7.2–7.4: the pre-WS1 eval baseline on `main` (`d4d1bf17`, judge Jev): dev subset with three repeats and per-case flip rates, dev trajectory cases, and the full default matrix once, with time, cost, noise bands and suspected scoring defects. Local only; nothing published.
 - [`eval-default-models-2026-09-25.md`](eval-default-models-2026-09-25.md) — the evals behind the builtin default models (Opus 5.5, Sonnet 5, Haiku 4.5, GPT 6 Sol and Luna), each candidate against Sonnet 4.5 on its agent's suite, three repeats, judge Jev. Local only.
 - [`eval-copilot-default-models-2026-09-29.md`](eval-copilot-default-models-2026-09-29.md) — the evals and live Copilot check behind the GitHub Copilot defaults: Sonnet 5.5 against Sonnet 5 on Shuttle, GPT 6 Sol against Luna on Spindle, and the models an OpenCode 2 host signed in to Copilot registers. Local only.
+- [`model-recommendations-spike.md`](model-recommendations-spike.md) — Spec 39 spike (1 Oct 2026): Ed25519 verification in Bun, the recommendations config layer, and a live model change on OpenCode 2.0.16 without a restart; found that a skipped layer flips agents back to their builtin models, so promotion must be atomic.
 
 ---
 

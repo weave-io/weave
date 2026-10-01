@@ -4,7 +4,7 @@ Task tracking for [Spec 39](39-spec-model-recommendations.md). Non-normative: ti
 
 ## Start here (for a new session)
 
-1. Read [Spec 39](39-spec-model-recommendations.md), then [Config Loading](../../config-loading.md), [Model Resolution](../../model-resolution.md#builtin-default-models) and the [Adapter Boundary](../../adapter-boundary.md).
+1. Read [Spec 39](39-spec-model-recommendations.md) and the [spike record](../../artifacts/model-recommendations-spike.md) (code on branch `spike/model-recommendations`, a starting point but not production quality), then [Config Loading](../../config-loading.md), [Model Resolution](../../model-resolution.md#builtin-default-models) and the [Adapter Boundary](../../adapter-boundary.md).
 2. Take the first group below whose boxes are not all ticked. Groups are in working order.
 3. One pull request per group. Write the tests first. Reference the tracking issue (#275) in the PR.
 4. Tick the boxes in this file in the same PR that does the work, and add the PR number next to the group heading.
@@ -13,7 +13,7 @@ Task tracking for [Spec 39](39-spec-model-recommendations.md). Non-normative: ti
 
 ## 1. DSL setting — PR:
 
-- [ ] 1.1 `SettingsConfigSchema` gains an optional strict `model_updates` object: `mode` (`off` | `notify` | `auto`, required in the block), `channel` (`stable` | `next`, default `stable`).
+- [ ] 1.1 `SettingsConfigSchema` gains an optional strict `model_updates` object: `mode` (`off` | `notify` | `auto`, required in the block), `channel` (`stable` | `next`, default `stable`). The spike showed the parser and validator need no change.
 - [ ] 1.2 Tests at all four levels named in [AGENTS.md](../../../AGENTS.md#schema-evolution-and-test-maintenance): schema, parser, validate, parse_config. Each valid mode and channel accepted; unknown mode, unknown channel, missing `mode` and unknown fields rejected with readable paths.
 - [ ] 1.3 Merge tests: project `mode off` overrides global `mode auto`; an omitted project block keeps the global one.
 - [ ] 1.4 [DSL reference](../../dsl-reference.md) documents the block; marked as having no effect until group 3 lands.
@@ -37,8 +37,8 @@ Task tracking for [Spec 39](39-spec-model-recommendations.md). Non-normative: ti
 ## 4. Fetch and cache — PR:
 
 - [ ] 4.1 `ModelRecommendations` class with injected `fetch`, clock and file access; `refresh({ force })` returns `ResultAsync` with a typed error.
-- [ ] 4.2 24-hour throttle per channel, `If-None-Match`/ETag, 5-second timeout, 64 KiB body cap, no identifying headers. `WEAVE_MODEL_RECOMMENDATIONS_URL` overrides the base URL.
-- [ ] 4.3 `latest` written only after verification; `auto` promotes to `applied` only when `issued` is later; `notify` holds. Rollback (older `issued`) and replay (same `issued`) leave `applied` unchanged.
+- [ ] 4.2 24-hour throttle per channel after success and 1-hour after failure, `If-None-Match`/ETag, 5-second timeout, 64 KiB body cap, no identifying headers. `WEAVE_MODEL_RECOMMENDATIONS_URL` overrides the base URL.
+- [ ] 4.3 `latest` and `applied` are single envelope files (`{ file, sig }`) written to a temporary name and renamed into place. `latest` written only after verification; `auto` promotes to `applied` only when `issued` is later; `notify` holds. Rollback (older `issued`) and replay (same `issued`) leave `applied` unchanged.
 - [ ] 4.4 Every failure path leaves both files unchanged and records an error code in `state.json`. No test touches the network.
 
 ## 5. CLI — PR:
@@ -51,7 +51,7 @@ Task tracking for [Spec 39](39-spec-model-recommendations.md). Non-normative: ti
 ## 6. OpenCode 2 — PR:
 
 - [ ] 6.1 After the first catalog publish, and on refresh probes when the throttle is due, call `refresh()` without awaiting it in the refresh path. Never in `build`, so a catalog attempt's exact bytes stay deterministic.
-- [ ] 6.2 Add `applied.json` (and its `.sig`) to the catalog's probed sources, recorded as missing when absent, so a promotion triggers the existing rebuild and reload.
+- [ ] 6.2 Test that `applied.json` appears in the catalog's source manifest (recorded as missing when absent) and that a promotion triggers the existing rebuild and reload. The spike showed no adapter change is needed: the loader reads it through the source cache's `FileReader`.
 - [ ] 6.3 `status` gains the optional bounded `modelUpdates` object and the `model_updates_unavailable` issue code; RPC schema tests updated.
 - [ ] 6.4 TUI notice when a reload changes an agent's resolved model because of an applied recommendation. Verify the notice mechanism live and record it in [OpenCode 2 core](../../adapters/opencode2-core.md).
 - [ ] 6.5 Adapter scenario in `tests/adapters/`: with `mode auto` and a stub fetch, a newly promoted file changes Loom's registered model after one refresh, with no restart; with `mode off`, no fetch happens.
@@ -67,4 +67,5 @@ Task tracking for [Spec 39](39-spec-model-recommendations.md). Non-normative: ti
 
 - [ ] 8.1 On a real OpenCode 2 host with `mode auto` and `WEAVE_MODEL_RECOMMENDATIONS_URL` pointing at a locally served signed file: publish a new list, observe Loom's model change after the refresh with no restart.
 - [ ] 8.2 Serve a tampered file: it is rejected, `status` reports it, and Loom keeps its model.
+- [ ] 8.2a Corrupt the local `applied.json` by hand: the layer is skipped, agents fall back to their builtin lists, and `status` carries `model_updates_unavailable` until the next successful promotion replaces the file. Promotions under load never produce that state (atomic envelopes).
 - [ ] 8.3 Record both under `docs/artifacts/` and link them from Spec 39.

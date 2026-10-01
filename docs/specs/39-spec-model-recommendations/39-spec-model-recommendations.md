@@ -1,6 +1,6 @@
 # Spec 39 — Model Recommendations
 
-**Status:** Proposed — direction agreed with the maintainer on 1 Oct 2026; see [39 tasks](39-tasks-model-recommendations.md) · **Tracking issue:** #275
+**Status:** Proposed — direction agreed with the maintainer on 1 Oct 2026, de-risked by a [live spike](../../artifacts/model-recommendations-spike.md) the same day; see [39 tasks](39-tasks-model-recommendations.md) · **Tracking issue:** #275
 
 **Related:** [39 tasks](39-tasks-model-recommendations.md) · [Model Resolution](../../model-resolution.md#builtin-default-models) · [Config Loading](../../config-loading.md) · [Adapter Boundary](../../adapter-boundary.md) · [OpenCode 2 core](../../adapters/opencode2-core.md#refresh-behavior) · [Partial config policy in the OpenCode 2 guide](../../adapters/opencode2-core.md#partial-and-broken-configs) · [Spec 36 — Execution Controls](../36-spec-execution-controls/36-spec-execution-controls.md) (the `settings` block precedent) · [Eval record, 25 Sep 2026](../../artifacts/eval-default-models-2026-09-25.md) · [Eval record, 29 Sep 2026](../../artifacts/eval-copilot-default-models-2026-09-29.md)
 
@@ -104,14 +104,16 @@ Under the global config directory (honouring `WEAVE_GLOBAL_CONFIG_DIR`):
 
 ```
 ~/.weave/cache/model-recommendations/<channel>/
-├── latest.json, latest.json.sig     # last verified download
-├── applied.json, applied.json.sig   # what the loader merges
-└── state.json                       # last check time, ETag, last error code
+├── latest.json    # last verified download: { "file": "<exact signed text>", "sig": "<base64>" }
+├── applied.json   # what the loader merges, same envelope
+└── state.json     # last check time, ETag, last error code
 ```
+
+Each envelope holds the exact signed bytes and their signature in one file, so a reader can never pair a new file with an old signature. Every write goes to a temporary name in the same directory and is renamed into place with `node:fs/promises` (as [`plan-task-reader.ts`](../../../packages/config/src/plan-task-reader.ts) already uses `node:fs/promises`), so a reader sees the old file or the new one, never a partial write.
 
 ### Fetching
 
-- `refresh()` does at most one request per channel per 24 hours, unless forced by `weave models update`. It sends `If-None-Match` with the stored ETag and no identifying headers or query parameters.
+- `refresh()` does at most one request per channel per 24 hours after a successful check, and one per hour after a failed one, unless forced by `weave models update`. It sends `If-None-Match` with the stored ETag and no identifying headers or query parameters.
 - The request has a 5-second timeout and the 64 KiB body limit. Only `https://tryweave.io` is fetched; tests and local proofs point at another URL with `WEAVE_MODEL_RECOMMENDATIONS_URL`.
 - A downloaded file is written to `latest` only after it parses, validates and verifies.
 - In `auto` mode a newly verified `latest` with a later `issued` is copied to `applied`. In `notify` mode it waits for `weave models apply`.
@@ -129,13 +131,13 @@ Under the global config directory (honouring `WEAVE_GLOBAL_CONFIG_DIR`):
 
   Union-merge then gives every agent `[user entries…, recommended entries…, builtin entries…]` with duplicates removed. A user's own preference still comes first, and the builtin list stays as a fallback when no recommended model is in the user's catalog.
 - A missing, unreadable or invalid `applied.json` is not a config error. The layer is skipped, the config loads as if `mode` were `off`, and the reason is reported (see [Visibility](#visibility)). This follows the partial-config policy: a problem with an optional input must not cost the user their agents.
-- Verifying on every load means a half-written `applied.json` is rejected rather than merged, so writes do not need to be atomic.
+- Atomic writes are required, not optional. On OpenCode 2 a skipped layer is still a valid catalog, so a torn or corrupt `applied.json` would publish every agent back on its builtin models until the file is fixed. The [spike](../../artifacts/model-recommendations-spike.md) saw exactly that with a hand-corrupted file. Atomic writes keep Weave's own promotions out of that state; a file corrupted by something else is skipped and reported, and the next promotion replaces it.
 
 ## Harness behaviour
 
 | Harness | When a change applies | What it does with the layer |
 | --- | --- | --- |
-| **OpenCode 2** (native) | Without restart. The plugin calls `refresh()` in the background after its first catalog publish and again whenever a refresh probe finds 24 hours have passed. `applied.json` is a probed catalog source, so a promotion is picked up by the existing refresh path, which rebuilds and reloads agents. | Same as the builtins: the first entry with exactly one live catalog match. A live session keeps its model; new sessions and later turns that Weave selects a model for use the new one. |
+| **OpenCode 2** (native) | Without restart. The plugin calls `refresh()` in the background after its first catalog publish and on each admitted prompt or plan start, where the throttle makes most calls no-ops. Because the loader reads `applied.json` through the injected `FileReader`, the catalog's source cache records it and the existing probe sees a promotion. The refresh runs on admitted work, not on a timer, so a change lands on the prompt after the one that fetched it. | Same as the builtins: the first entry with exactly one live catalog match. A live session keeps its model; new sessions and later turns that Weave selects a model for use the new one. |
 | **OpenCode V1** | Next OpenCode start. | Uses only `provider/model` entries, so bare recommended IDs have no effect, as with the builtin defaults. |
 | **Claude Code** | Next session start (the plugin reruns composition then). | Maps the first allowlisted entry to `opus`, `sonnet` or `haiku`. A recommended model outside the allowlist is skipped. |
 | **Pi** | Next session start. | The first declared entry that `ctx.modelRegistry.getAvailable()` offers, as for the builtin defaults. |
@@ -181,9 +183,9 @@ One pull request per item, tests first, in this order. Tasks are in the [tasks f
 | 3 | **Loader layer** | With `mode` off or absent, `loadConfig` output is byte-identical to today's for the existing fixtures. With a valid `applied.json`, builtin agents get `[user…, recommended…, builtin…]`; with an invalid one, the layer is skipped and the reason surfaced. |
 | 4 | **Fetch and cache** | `ModelRecommendations.refresh()` with injected fetch and file access: 24-hour throttle, ETag, size and time limits, rollback protection, `auto` promotion and `notify` holding. No test touches the network. |
 | 5 | **CLI** | `weave models status`, `update`, `apply`, `pin` and `check`, and the `weave validate` reporting, documented in [CLI](../../cli.md). |
-| 6 | **OpenCode 2** | Background refresh after first publish and on due probes; `applied.json` as a probed source; `status` fields and issue code; TUI notice. An adapter scenario in `tests/adapters/` shows a promoted file reaching a reloaded agent without restart. |
+| 6 | **OpenCode 2** | Background refresh after first publish and on admitted work; a test that `applied.json` is a probed source (no new plumbing: the [spike](../../artifacts/model-recommendations-spike.md) showed the loader's `FileReader` is enough); `status` fields and issue code; TUI notice. An adapter scenario in `tests/adapters/` shows a promoted file reaching a reloaded agent without restart. |
 | 7 | **Website** | Files, signing in the deploy workflow, nginx headers, user docs page. Opened against `pgermishuys/weave-website`. |
-| 8 | **Live proof** | On a real OpenCode 2 host with `mode auto`, pointed at a locally served signed file: an agent's model changes after promotion with no restart, and a tampered file is rejected with the old model kept. Recorded under `docs/artifacts/`. |
+| 8 | **Live proof** | On a real OpenCode 2 host with `mode auto`, pointed at a locally served signed file: an agent's model changes after promotion with no restart, a tampered remote file is rejected with the old model kept, and a corrupt local file is reported with `model_updates_unavailable` while agents run on their builtin lists. Recorded under `docs/artifacts/`, as the [spike](../../artifacts/model-recommendations-spike.md) did for the first two. |
 
 ## Finish line
 
