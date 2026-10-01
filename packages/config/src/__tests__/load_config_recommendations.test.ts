@@ -660,4 +660,21 @@ describe("loadConfigDetailed with an applied list it cannot use", () => {
       throw new Error("expected a skipped diagnostic");
     expect(diagnostic.reason.type).toBe("Unreadable");
   });
+
+  it("reports a reader that throws synchronously as unreadable", async () => {
+    const reader: FileReader = {
+      exists: (path) => {
+        if (path.includes("/cache/")) throw new Error("sync failure");
+        return Promise.resolve(path === GLOBAL_PATH);
+      },
+      read: () => okAsync(OPT_IN),
+    };
+    const result = await withGlobalDir(() =>
+      loadConfigDetailed(PROJECT, reader, options()),
+    );
+    const [diagnostic] = result._unsafeUnwrap().diagnostics;
+    if (diagnostic?.type !== "ModelRecommendationsSkipped")
+      throw new Error("expected a skipped diagnostic");
+    expect(diagnostic.reason.type).toBe("Unreadable");
+  });
 });

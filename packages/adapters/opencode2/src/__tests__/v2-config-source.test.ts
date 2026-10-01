@@ -183,4 +183,30 @@ describe("model recommendations in the catalog (Spec 39)", () => {
     ).toBe(true);
     expect(catalog.agents.has("loom")).toBe(true);
   });
+
+  it("keeps the catalog when applied.json cannot be inspected", async () => {
+    const files = new Map([
+      [projectConfig, encode("settings { model_updates { mode auto } }")],
+    ]);
+    const memory = new MemorySourceIo(files);
+    const io: CatalogSourceIo = {
+      exists: (path) =>
+        path === applied
+          ? Promise.reject(new Error("permission denied"))
+          : memory.exists(path),
+      readBytes: (path) => memory.readBytes(path),
+    };
+    const result = await buildOpenCode2Catalog({
+      location: "/project",
+      projectConfig: true,
+      models: [],
+      skills: [],
+      sourceIo: io,
+    });
+    const catalog = result._unsafeUnwrap();
+    expect(catalog.issues).toContainEqual({
+      code: "model_updates_unavailable",
+    });
+    expect(catalog.agents.has("loom")).toBe(true);
+  });
 });

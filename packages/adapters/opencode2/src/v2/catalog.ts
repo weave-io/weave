@@ -183,7 +183,17 @@ function buildCandidate(
       };
     })
     .andThen(({ config, diagnostics }) => {
-      if (sources.ioError() !== undefined) {
+      // The recommendations file is optional: the loader already skipped the
+      // layer and reported it, so failing to inspect it must not cost the
+      // user the catalog. Any other source that cannot be inspected still does.
+      const skippedRecommendations = diagnostics.find(
+        (diagnostic) => diagnostic.type === "ModelRecommendationsSkipped",
+      );
+      const ioError = sources.ioError();
+      if (
+        ioError !== undefined &&
+        ioError.path !== skippedRecommendations?.path
+      ) {
         return err<OpenCode2CatalogCandidate, OpenCode2Error>({
           code: "config_unavailable",
           message: "a Weave source could not be inspected",
@@ -222,11 +232,7 @@ function buildCandidate(
             plan.errors.map(materializationIssue);
           // A skipped recommendations layer is not a config error: the
           // catalog loads on the builtin lists and `status` says so.
-          if (
-            diagnostics.some(
-              (diagnostic) => diagnostic.type === "ModelRecommendationsSkipped",
-            )
-          )
+          if (skippedRecommendations !== undefined)
             issues.push({ code: "model_updates_unavailable" });
           const availableSkills: SkillInfo[] = input.skills.map((skill) => ({
             name: skill.name,

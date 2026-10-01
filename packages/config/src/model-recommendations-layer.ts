@@ -103,10 +103,13 @@ export class ModelRecommendationsLayerReader {
   private readEnvelope(
     path: string,
   ): ResultAsync<string, ModelRecommendationsSkipReason> {
-    return ResultAsync.fromPromise(
-      this.deps.reader.exists(path),
+    // fromThrowable, not fromPromise: a reader that throws synchronously must
+    // still give `Unreadable`, not escape this never-failing method.
+    const exists = ResultAsync.fromThrowable(
+      (target: string) => this.deps.reader.exists(target),
       (): ModelRecommendationsSkipReason => ({ type: "Unreadable" }),
-    ).andThen((exists) => {
+    );
+    return exists(path).andThen((exists) => {
       if (!exists)
         return errAsync<string, ModelRecommendationsSkipReason>({
           type: "Missing",
