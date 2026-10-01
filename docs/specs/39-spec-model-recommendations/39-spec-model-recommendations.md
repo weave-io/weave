@@ -45,7 +45,7 @@ settings {
 
 - `model_updates` is an optional block inside `settings`. It rejects unknown fields.
 - `mode` is required inside the block: `off`, `notify` or `auto`. Omitting the block means `off`.
-- `channel` is optional and defaults to `stable`.
+- `channel` is optional. An omitted `channel` stays unset in each layer, so a project block that sets only `mode` does not reset a global `channel next`; whatever reads the merged setting treats an unset channel as `stable`. (#278)
 - Config layers deep-merge the block with the usual project-over-global precedence. A project can turn updates off for itself with `mode off`.
 
 | Mode | Fetches | Applies |
