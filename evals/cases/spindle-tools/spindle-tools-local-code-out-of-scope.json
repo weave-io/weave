@@ -1,0 +1,40 @@
+{
+  "id": "spindle-tools-local-code-out-of-scope",
+  "description": "Research question: Our `src/net/retry.ts` sets `maxRetries: 3` for the Pelican HTTP client. Why did we choose 3, and is 3 the library's default? [1] Pelican HTTP 5.x reference, 'Retries' (official docs): '`maxRetries` defaults to 2. Retries back off exponentially, starting at 200 ms.'",
+  "suite": "spindle-tools",
+  "allowed_agents": ["spindle"],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report in the required format (a direct answer, `Source facts` with inline citations, `Interpretation`, a `Sources:` list and a `Confidence:` line) which answers the external half, 3 is not the default because Pelican's default is 2 [1], and says that why the team chose 3 is a question about the local codebase or its history, which it cannot answer from external sources. That is all that is required; pointing to the commit history or the team is optional.",
+    "required_artifacts": [
+      "spindle_inline_citations_present",
+      "spindle_source_facts_separated",
+      "spindle_confidence_reported",
+      "spindle_sources_list_present"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Source facts"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Interpretation"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Confidence:"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Sources:"
+    }
+  ],
+  "tags": ["research", "scope", "local-code"]
+}

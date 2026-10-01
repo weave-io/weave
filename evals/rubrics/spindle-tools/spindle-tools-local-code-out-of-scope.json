@@ -1,0 +1,10 @@
+{
+  "case_id": "spindle-tools-local-code-out-of-scope",
+  "suite": "spindle-tools",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged on the expected outcome as well as the report format: a report with every section still fails if it misses the behaviour below. Fail the answer if it says 3 is the default, or if it states a reason the team chose 3 as fact. Speculation about possible reasons is acceptable only in Interpretation, clearly marked as a guess, alongside the statement that the actual reason is not in the sources."
+  }
+}

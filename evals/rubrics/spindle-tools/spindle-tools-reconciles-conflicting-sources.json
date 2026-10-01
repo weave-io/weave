@@ -1,0 +1,10 @@
+{
+  "case_id": "spindle-tools-reconciles-conflicting-sources",
+  "suite": "spindle-tools",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged on the expected outcome as well as the report format: a report with every section still fails if it misses the behaviour below. Fail the answer if it gives 100 as the 3.2 default, if it says the default cannot be determined, if it says 3.2.0 changed the `maxBatchSize` default, or if it answers 500 without saying that the reference page [1] says 100 and is out of date. Confidence high or medium are both acceptable."
+  }
+}

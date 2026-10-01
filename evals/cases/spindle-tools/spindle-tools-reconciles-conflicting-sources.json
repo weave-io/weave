@@ -1,0 +1,40 @@
+{
+  "id": "spindle-tools-reconciles-conflicting-sources",
+  "description": "Research question: In Larkspur Queue 3.2, what is the default `maxBatchSize` of a consumer? [1] Larkspur API reference, `Consumer` options page, footer 'Documented for version 3.0': `maxBatchSize` defaults to 100. [2] Larkspur changelog, '3.1.0 (2026-04-02)': 'Raised the default `maxBatchSize` from 100 to 500.' [3] Larkspur changelog, '3.2.0 (2026-07-15)': 'Added `maxBatchBytes`, unset by default. When it is set, a batch also stops growing once it reaches `maxBatchBytes`.'",
+  "suite": "spindle-tools",
+  "allowed_agents": ["spindle"],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report in the required format (a direct answer, `Source facts` with inline citations, `Interpretation`, a `Sources:` list and a `Confidence:` line) whose answer is 500 for 3.2, and which names the conflict: the reference [1] says 100, but it documents 3.0 and the 3.1.0 changelog [2] raised the default to 500. That is all that is required; noting that 3.2.0 [3] left the count default alone and only adds a byte limit when `maxBatchBytes` is set is optional.",
+    "required_artifacts": [
+      "spindle_inline_citations_present",
+      "spindle_source_facts_separated",
+      "spindle_confidence_reported",
+      "spindle_sources_list_present"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Source facts"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Interpretation"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Confidence:"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Sources:"
+    }
+  ],
+  "tags": ["research", "conflicting-sources", "reconcile"]
+}

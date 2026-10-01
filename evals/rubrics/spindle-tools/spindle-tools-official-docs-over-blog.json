@@ -1,0 +1,10 @@
+{
+  "case_id": "spindle-tools-official-docs-over-blog",
+  "suite": "spindle-tools",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged on the expected outcome as well as the report format: a report with every section still fails if it misses the behaviour below. Fail the answer if it says incremental builds are supported on Windows, if it presents `FERRULE_FS_WATCH=polling` as documented or official, if it treats the newer, popular blog post as overriding the official docs, or if it leaves the blog's claim out entirely. Suggesting the workaround as something to try, clearly labelled as unofficial, is fine."
+  }
+}

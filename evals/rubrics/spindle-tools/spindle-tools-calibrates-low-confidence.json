@@ -1,0 +1,10 @@
+{
+  "case_id": "spindle-tools-calibrates-low-confidence",
+  "suite": "spindle-tools",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged on the expected outcome as well as the report format: a report with every section still fails if it misses the behaviour below. Fail the answer if it says Gannet DB 7 supports online index rebuilds as fact, if it presents `REBUILD INDEX ... ONLINE` as documented syntax, or if its confidence is medium or high."
+  }
+}

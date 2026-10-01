@@ -1,0 +1,10 @@
+{
+  "case_id": "spindle-tools-version-mismatch",
+  "suite": "spindle-tools",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Judged on the expected outcome as well as the report format: a report with every section still fails if it misses the behaviour below. Fail the answer if it presents `tessel.use(serializer)` as the way to do it in Tessel 3, if it presents `defineSerializer()` (alone or passed to `tessel.use`) as the documented way to register one, or if it invents another Tessel 3 API. [2] says `defineSerializer()` defines a typed serializer; it does not say how one is registered. An answer whose direct answer says the Tessel 3 registration call is not documented in the sources passes, even if its Interpretation guesses, marked as a guess, that `defineSerializer()` is likely part of the new path. Mentioning the Tessel 2 call is correct as long as the answer says it is the Tessel 2 API and is not confirmed for Tessel 3. Confidence high fails: the brief has no Tessel 3 reference."
+  }
+}

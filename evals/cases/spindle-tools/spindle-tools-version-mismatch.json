@@ -1,0 +1,40 @@
+{
+  "id": "spindle-tools-version-mismatch",
+  "description": "Research question: How do I register a custom serializer in Tessel 3? [1] Tessel 2 guide, 'Serializers' section: call `tessel.use(serializer)` before `tessel.start()`; a serializer is an object with `encode` and `decode` methods. [2] Tessel 3.0 release notes, 2026-05-20: 'New: a `defineSerializer()` helper for typed serializers. Breaking: plugin and serializer registration was redesigned. A migration guide is coming soon.'",
+  "suite": "spindle-tools",
+  "allowed_agents": ["spindle"],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report in the required format (a direct answer, `Source facts` with inline citations, `Interpretation`, a `Sources:` list and a `Confidence:` line) whose answer says the sources do not document how to register a serializer in Tessel 3: `tessel.use(serializer)` is the Tessel 2 API [1], and the 3.0 release notes [2] say registration was redesigned, so it may not apply to Tessel 3. That is all that is required; mentioning that `defineSerializer()` exists in 3.0 [2], or suggesting the Tessel 3 reference or the migration guide, is optional.",
+    "required_artifacts": [
+      "spindle_inline_citations_present",
+      "spindle_source_facts_separated",
+      "spindle_confidence_reported",
+      "spindle_sources_list_present"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Source facts"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Interpretation"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Confidence:"
+    },
+    {
+      "check": "content_contains",
+      "role": "assistant",
+      "contains": "Sources:"
+    }
+  ],
+  "tags": ["research", "version-specific"]
+}
