@@ -82,7 +82,7 @@ evals/
 │       ├── warp-security-traced-injection.json         # judgment
 │       ├── warp-security-guarded-false-positive.json   # judgment
 │       ├── warp-security-guarded-parameterised-sql.json  # judgment
-│       ├── warp-security-presigned-download-url.json   # judgment
+│       ├── warp-security-cors-exact-allowlist.json     # judgment
 │       ├── warp-security-path-prefix-bypass.json       # judge-scored
 │       ├── warp-security-copy-target-authz.json        # judge-scored
 │       ├── warp-security-ssrf-redirect-bypass.json     # judge-scored
@@ -155,7 +155,7 @@ evals/
         ├── warp-security-traced-injection.json
         ├── warp-security-guarded-false-positive.json
         ├── warp-security-guarded-parameterised-sql.json
-        ├── warp-security-presigned-download-url.json
+        ├── warp-security-cors-exact-allowlist.json
         ├── warp-security-path-prefix-bypass.json
         ├── warp-security-copy-target-authz.json
         ├── warp-security-ssrf-redirect-bypass.json
@@ -446,8 +446,11 @@ pattern with credentials (`cors-origin-pattern`), prototype pollution through
 a deep merge into an admin check (`prototype-pollution-merge`), and an async
 signature check called without `await` (`unawaited-signature-check`). The
 approvals beside them are SQL whose only user-chosen fragment comes from a
-constant map (`guarded-parameterised-sql`) and a presigned object-storage URL
-issued after an ownership check (`presigned-download-url`).
+constant map (`guarded-parameterised-sql`) and credentialed CORS for an exact
+list of company-run origins (`cors-exact-allowlist`), the counterpart of
+`cors-origin-pattern`. An approval must not contradict an explicit rule in
+Warp's prompt: a case that expects a model to override the prompt measures
+the prompt, not the model.
 
 ### Judgment cases (`judgment` tag)
 
