@@ -103,6 +103,8 @@ It reads only the two local bundles, so it makes no model calls and needs no key
 - **no detectable change**: the data cannot tell the two runs apart. It does *not* mean the runs are equal. With 25 attempts a side, a move from 60% to 80% usually goes undetected. The fix is a higher `--repeat` or more cases.
 - **no detectable change: too few scored attempts**: nothing this small could ever reach significance. Re-run both with a higher `--repeat`.
 
+Under each row it also prints both runs' mean cost per attempt, the model's calls and the judge's calls separately (see Cost and time below).
+
 It refuses runs that used different models, cases, repeat counts, judges or config modes, and it refuses dry runs. See [Measure a change](agent-evals.md#measure-a-change) and [Compare two runs](agent-evals.md#compare-two-runs-eval-compare).
 
 **5. Trajectory cases.** These need Podman and the sandbox image. Build the image once, and again after pulling changes:
@@ -124,6 +126,8 @@ gh workflow run agent-evals.yml -f models=dev -f repeat=3
 The inputs are `agent`, `model`, `models` (`default` or `dev`), `case`, `repeat` and `trajectory` (on by default). The workflow runs a text job and then a trajectory job. See [CI dispatch](agent-evals.md#ci-dispatch).
 
 **Cost and time.**
+- Every live run records what each attempt cost. Each score file row (`score-<suite>.json`) carries the model's prompt and completion tokens and cost, and the judge's separately. The cost is the one OpenRouter reported in the response when there is one, and otherwise the tokens at the model's list prices in `evals/model-matrix.json`. The run report ends with the mean cost per attempt per model, and `eval compare` prints it for both runs. Usage a provider left out is recorded as missing, never as zero, and a mean that leaves such attempts out says so. Harness trajectory sessions make their model calls inside OpenCode, so only their judge calls are costed. Cost stays in the local score files; the public report does not carry it. See [Cost per attempt](agent-evals.md#cost-per-attempt).
+- The figures below come from reading the OpenRouter credit balance before and after a whole run, judge included, as every run before 1 Oct 2026 was costed.
 - A live run of 16 answers on the dev subset, one case per judged suite with Jev judging, cost about $0.012 on 24 Sep 2026.
 - `--models dev --repeat 3` on the text track: about $0.18 and 1 h 40 min as one process (276 attempts, 24 Sep 2026). The dev trajectory cases added about 5 min and $0.04 when only five sessions ran on DeepSeek; they are now 12 sessions per repeat, on both dev models.
 - The full default matrix, once: about $6.92 for the text track and $3.41 more for the 15 trajectory sessions the cases then allowed. The trajectory cases now run on every default model (84 sessions per repeat), so expect several times that. Run one process per suite and model in parallel, it took about 30 min (24 Sep 2026). See the [baseline](artifacts/eval-baseline-2026-09-24.md).

@@ -50,6 +50,7 @@
 
 import { err, ok, Result, ResultAsync } from "neverthrow";
 import { z } from "zod";
+import type { UsageLedger } from "./attempt-usage.js";
 import type {
   JudgeCriterion,
   JudgeInput,
@@ -57,6 +58,7 @@ import type {
   LangChainJudge,
 } from "./langchain-agent-evals.js";
 import { PRIMARY_STRUCTURAL_PASS_THRESHOLD } from "./langchain-agent-evals.js";
+import type { ModelUsage } from "./openrouter-client.js";
 import type { JudgeIdentity } from "./report-schema.js";
 import type { ScoringDimension, ScoringError } from "./types.js";
 
@@ -325,6 +327,39 @@ export interface JevJudgeOptions {
   timeoutMs?: number;
   /** Waits between attempts. Defaults to `Bun.sleep`; inject in tests. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Where each answered judge call's usage is recorded, so the run can state
+   * the judge's cost per attempt (Spec 39 task 0.6). Omit it to record none.
+   */
+  usageLedger?: UsageLedger;
+}
+
+/**
+ * The `usage` block of a decisions response: `input_tokens` and
+ * `output_tokens`, and the call's `cost` in OpenRouter credits (US dollars)
+ * when OpenRouter reports it.
+ */
+const JevUsageSchema = z.object({
+  input_tokens: z.number().int().nonnegative(),
+  output_tokens: z.number().int().nonnegative(),
+  cost: z.number().finite().nonnegative().optional(),
+});
+
+/**
+ * The usage a decisions response reported, or `undefined` when it has no
+ * readable `usage` block. Missing counts are never read as zero.
+ */
+export function readJevUsage(body: unknown): ModelUsage | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
+  const parsed = JevUsageSchema.safeParse((body as { usage?: unknown }).usage);
+  if (!parsed.success) return undefined;
+  const { input_tokens, output_tokens, cost } = parsed.data;
+  return {
+    promptTokens: input_tokens,
+    completionTokens: output_tokens,
+    totalTokens: input_tokens + output_tokens,
+    ...(cost !== undefined ? { costUsd: cost } : {}),
+  };
 }
 
 /**
@@ -397,11 +432,27 @@ export class JevJudge implements LangChainJudge {
       return new ResultAsync(Promise.resolve(err(request.error)));
     }
     return this.post(input.dimension, JSON.stringify(request.value), 0)
+      .map((body) => {
+        this.recordUsage(model, body);
+        return body;
+      })
       .andThen((body) => parseJevDecision(body, input, model))
       .map((decision) => ({
         score: jevScore(decision.overall),
         rationale: jevRationale(decision),
       }));
+  }
+
+  /** Record an answered call's usage, when a ledger was given. */
+  private recordUsage(model: string, body: unknown): void {
+    const ledger = this.options.usageLedger;
+    if (ledger === undefined) return;
+    const usage = readJevUsage(body);
+    ledger.record({
+      role: "judge",
+      model,
+      ...(usage !== undefined ? { usage } : {}),
+    });
   }
 
   /**

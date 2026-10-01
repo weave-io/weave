@@ -50,6 +50,11 @@
 
 import type { TrajectorySummary } from "@weaveio/weave-core";
 import { err, ok, type Result } from "neverthrow";
+import {
+  type AttemptUsage,
+  type CallsUsage,
+  COST_SOURCES,
+} from "./attempt-usage.js";
 import { type EvalConfigMode, isEvalConfigMode } from "./config-mode.js";
 import {
   type BoundedExplanation,
@@ -215,6 +220,12 @@ export interface SanitizedCaseResultSummary {
    * Present only with `errored: true`.
    */
   readonly errorClassification?: string;
+  /**
+   * Token counts and cost of the attempt's model and judge calls. Numbers
+   * and a closed cost-source label only. Written to the internal score files;
+   * the public report is assembled without it.
+   */
+  readonly usage?: AttemptUsage;
 }
 
 /**
@@ -297,6 +308,38 @@ export function sanitizeCaseResultSummary(
     ...(summary.errored === true ? { errored: true } : {}),
     ...(summary.errored === true && summary.errorClassification !== undefined
       ? { errorClassification: summary.errorClassification }
+      : {}),
+    // usage is allowlisted: call counts, token counts, US dollar amounts and
+    // a closed cost-source label, rebuilt field by field.
+    ...(summary.usage !== undefined
+      ? { usage: sanitizeAttemptUsage(summary.usage) }
+      : {}),
+  };
+}
+
+/** The allowlisted projection of an attempt's usage. */
+export function sanitizeAttemptUsage(usage: AttemptUsage): AttemptUsage {
+  return {
+    ...(usage.model !== undefined
+      ? { model: sanitizeCallsUsage(usage.model) }
+      : {}),
+    judge: sanitizeCallsUsage(usage.judge),
+  };
+}
+
+function sanitizeCallsUsage(calls: CallsUsage): CallsUsage {
+  return {
+    calls: calls.calls,
+    ...(calls.promptTokens !== undefined
+      ? { promptTokens: calls.promptTokens }
+      : {}),
+    ...(calls.completionTokens !== undefined
+      ? { completionTokens: calls.completionTokens }
+      : {}),
+    ...(calls.costUsd !== undefined ? { costUsd: calls.costUsd } : {}),
+    ...(calls.costSource !== undefined &&
+    COST_SOURCES.includes(calls.costSource)
+      ? { costSource: calls.costSource }
       : {}),
   };
 }

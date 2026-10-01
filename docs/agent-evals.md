@@ -124,6 +124,7 @@ packages/cli/src/evals/
 ├── weft-review-runner.ts         WeftReviewRunner
 ├── warp-security-runner.ts       WarpSecurityRunner
 ├── openrouter-client.ts      OpenRouterClient for model inference
+├── attempt-usage.ts          Per-attempt tokens and cost: UsageLedger, MeteredModelClient, AttemptUsageMeter
 ├── langchain-agent-evals.ts  LangChainAgentEvalsScorer — the scorer, and the LangChainJudge interface
 ├── judge-questions.ts        What the judge is asked per dimension: rubric, reference, answer, criteria
 ├── jev-judge.ts              JevJudge — the eval judge (TypeSafe Jev on OpenRouter's decisions endpoint)
@@ -150,6 +151,21 @@ Everything else derives from it:
 | `agent-evals.yml` dispatch allowlist | `jq -r '.models[].id' evals/model-matrix.json` at run time |
 | Trajectory cases | five omit `allowed_models` like any other case; the Phase 1 case lists every default model plus `openai/gpt-4o-mini` (see [Trajectory cases run on every default model](#trajectory-cases-run-on-every-default-model)) |
 | Trajectory model allowlist | the union of `allowed_models` across `harness_trajectory` cases, an omitted list read as the default and dev models, computed with `jq` |
+
+An entry may also list the model's `prices` on OpenRouter, in US dollars per
+million tokens, with the day they were read:
+
+```json
+"prices": { "input_per_million": 2, "output_per_million": 10, "as_of": "2026-10-01" }
+```
+
+They cost an attempt whose response did not report its own cost (see
+[Cost per attempt](#cost-per-attempt)). Every `default` and `dev` model must
+list them, which a test enforces. Read them from OpenRouter's public models API,
+`GET https://openrouter.ai/api/v1/models` (no key needed): its `pricing.prompt`
+and `pricing.completion` are dollars per token, so multiply by a million. The
+schema is strict: a negative price, a missing `as_of` or an unknown field is
+rejected at load time.
 
 Before this, a model had to be listed in 46 case fixtures plus two workflow
 variables plus the dispatch input description — around 50 edits, each of which
@@ -462,7 +478,9 @@ bundles; it makes no model call and needs no API key.
 suite × model, both pass rates with 95% Wilson intervals, the difference in
 points and a verdict; under each row it lists the cases whose pass rate moved.
 It also names each agent whose composed-prompt hash changed (hash only), the
-judge each run records, and the config mode both runs composed from. It exits 0 when it compared the runs, whatever it
+judge each run records, and the config mode both runs composed from. Under each
+row it prints both runs' mean cost per attempt (see
+[Cost per attempt](#cost-per-attempt)). It exits 0 when it compared the runs, whatever it
 found, and 1 when it refused.
 
 ```text
@@ -480,6 +498,8 @@ Eval compare 86eb974-2026-09-23-001 → 1a2b3c4-2026-09-23-001
       baseline   1/10    10% [2–40%]
       candidate  10/10  100% [72–100%]
       IMPROVED (+90 points)  p < 0.001, Holm-adjusted p < 0.001
+      Cost per attempt, model calls: $0.000310 (reported by OpenRouter) → $0.000420 (reported by OpenRouter)
+      Cost per attempt, judge calls: $0.0000400 (reported by OpenRouter) → $0.0000400 (reported by OpenRouter)
       Cases whose pass rate moved:
         loom-route-api  0/5 → 5/5  (p = 0.008, unadjusted)
         loom-route-ui  1/5 → 5/5  (p = 0.048, unadjusted)
@@ -560,12 +580,96 @@ compare a post-16.4 run only with another post-16.4 run.
 names (suite names must be plain identifiers, so a bundle cannot point the
 reader outside its directory), `prompt-hashes.json`, and the judge and config
 mode fields above. It never opens `raw/`, and it prints only identifiers, counts, rates,
-p-values, short hashes and the judge id, so its output is safe in a CI log.
+p-values, short hashes, the judge id and dollar amounts, so its output is safe in a CI log.
 
 `repeatability-diagnostics.json` (below) is still written after each run as a
 descriptive log of earlier runs with the same filters. Its `drifted` and
 `mixed` labels flag any difference at all, including chance; use
 `eval compare` to decide whether a difference is real.
+
+### Cost per attempt
+
+A model recommendation changes users' bills, so its evidence states what the
+candidate cost per attempt against the current model (Spec 39 task 0.6, gap
+G6 of the [eval readiness record](artifacts/eval-readiness-model-recommendations.md)).
+Before 1 Oct 2026 the only cost figure was the OpenRouter credit balance read
+before and after a whole run, judge included; the run-level figures in the
+dated records below were measured that way.
+
+**What is recorded.** Every live run stores, on each attempt's row of
+`score-<suite>.json`, a `usage` object with the evaluated model's calls and the
+judge's calls kept apart:
+
+```json
+"usage": {
+  "model": { "calls": 2, "promptTokens": 2000, "completionTokens": 230, "costUsd": 0.0095, "costSource": "provider" },
+  "judge": { "calls": 2, "promptTokens": 800, "completionTokens": 100, "costUsd": 0.00004, "costSource": "provider" }
+}
+```
+
+- `calls` counts every call the provider answered, retries included: an empty
+  or truncated answer is billed, so it is part of the attempt
+  (see [Empty and truncated answers](#empty-and-truncated-answers-errored-cases)).
+  A request that failed before the provider answered (network, HTTP or parse
+  failure) is not counted; nothing is known about it.
+- `promptTokens` and `completionTokens` (reasoning included) are present only
+  when every call reported them. A provider that left usage out leaves them
+  out here too. They are never filled in with zero.
+- `costUsd` is present only when every call has a cost. `costSource` says
+  where it came from:
+  - `provider`: the `usage.cost` OpenRouter reported in the response, in
+    credits (US dollars). OpenRouter includes it in every chat completion
+    response, and the decisions endpoint Jev answers on reports it too. It
+    is preferred: it covers cache discounts and the provider that served the
+    call.
+  - `prices`: the call's tokens at the model's `prices` in
+    `evals/model-matrix.json`, when OpenRouter reported tokens but no cost.
+    Long-context tiers and cache discounts are not modelled. The judge is
+    not in the matrix, so its calls are costed only from what OpenRouter
+    reports.
+  - `mixed`: some calls of the attempt from each.
+- With no calls at all (the judge on an attempt whose model call errored, or
+  a suite whose dimensions the scorer decides itself), the counts and cost
+  are `0`, because nothing was spent.
+- A harness trajectory attempt has no `model` entry: OpenCode made those calls
+  with its own provider session, so they are not metered here. Its judge
+  calls are.
+- Errored attempts carry usage too: their calls were billed.
+
+**How it is collected.** `MeteredModelClient` sits under the orchestrator's
+`RetryingModelClient` and records every answered call in a `UsageLedger`
+that `JevJudge` also records into (`commands/eval.ts` hands both the same
+ledger). Runners execute cases one at a time; when a case finishes, the
+runner passes its result to `AttemptUsageMeter.attach()`, which drains the
+ledger and totals the calls onto that case's summary. See
+[`attempt-usage.ts`](../packages/cli/src/evals/attempt-usage.ts).
+
+**How it is reported.** The run report ends with the mean cost per attempt
+per model, the model's calls and the judge's calls on separate lines, and
+`eval compare` prints the same for both runs under each suite × model row:
+
+```text
+  Cost per attempt (mean):
+    openai/gpt-6-luna
+      model calls  $0.000410 (reported by OpenRouter)
+      judge calls  $0.0000400 (reported by OpenRouter)
+```
+
+The mean covers every attempt with a known cost, errored ones included.
+Attempts without one are left out of it and counted:
+`$0.00200 (at matrix prices)  (no recorded cost for 1 of 4 attempts, left out of the mean)`.
+When no attempt has a cost the line says `not recorded`, and a comparison of
+two runs that both predate this says `Cost per attempt: not recorded in either run`.
+
+**Where it is kept.** Only in the local score files, which are internal
+bundle files and never published to the results repository. The public
+report (`public-report.json`, [Spec 31](specs/31-spec-weave-agent-evals-reporting/31-spec-weave-agent-evals-reporting.md))
+is assembled field by field and does not carry it, and `bundle-index.json` does
+not either, so no published schema changed and no `schemaVersion` was bumped.
+`usage` is allowlisted on `SanitizedCaseResultSummary` and rebuilt field by
+field, so it can hold only counts, dollar amounts and the closed
+`costSource` label. Publishing cost on tryweave.io is a separate change: it
+needs a new `PublicReportBundle` schema version under Spec 31.
 
 ## Eval Suites
 

@@ -13,6 +13,10 @@
  * pass rate over the repeats (errored attempts left out and counted
  * separately), then the same breakdown for each attempt that did not pass.
  *
+ * After the cases it prints the mean cost per attempt of each model's own
+ * calls and of the judge's calls, marking a mean that leaves out attempts
+ * with no recorded cost (see `attempt-usage.ts`).
+ *
  * What it prints is limited to the publishable `CaseReport` fields plus local
  * paths. The transcript, the model's answer, the composed prompt and the
  * judge's rationales stay in the raw artifact file, which exists only under
@@ -21,6 +25,7 @@
  */
 
 import type { ThemeColors } from "../theme/colors.js";
+import { type CostSummary, describeCost } from "./attempt-usage.js";
 import {
   PASS_THRESHOLD,
   PRIMARY_STRUCTURAL_PASS_THRESHOLD,
@@ -75,8 +80,33 @@ export class EvalRunReport {
         lines.push("", ...this.caseLines(report));
       }
     }
-    lines.push(...this.footer(summary), "");
+    lines.push(...this.costLines(summary), ...this.footer(summary), "");
     return lines.join("\n");
+  }
+
+  /**
+   * Mean cost per attempt per model, the model's calls and the judge's
+   * separately (Spec 39 task 0.6). A live run only: a dry run spent nothing.
+   */
+  private costLines(summary: EvalRunSummary): string[] {
+    if (summary.caseReports.length === 0) return [];
+    if (summary.modelRollups.length === 0) return [];
+    const lines = ["", "  Cost per attempt (mean):"];
+    for (const rollup of summary.modelRollups) {
+      lines.push(
+        `    ${rollup.modelId}`,
+        `      model calls  ${this.cost(rollup.cost.model)}`,
+        `      judge calls  ${this.cost(rollup.cost.judge)}`,
+      );
+    }
+    return lines;
+  }
+
+  private cost(summary: CostSummary): string {
+    const described = describeCost(summary);
+    if (summary.meanUsd === null) return this.theme.yellow(described.mean);
+    if (described.missing === null) return described.mean;
+    return `${described.mean}  ${this.theme.yellow(`(${described.missing}, left out of the mean)`)}`;
   }
 
   private header(summary: EvalRunSummary): string[] {

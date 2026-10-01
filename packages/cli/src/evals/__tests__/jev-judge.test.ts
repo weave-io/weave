@@ -24,6 +24,7 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { UsageLedger } from "../attempt-usage.js";
 import {
   buildJevRequest,
   type FetchLike,
@@ -33,6 +34,7 @@ import {
   jevRationale,
   jevScore,
   parseJevDecision,
+  readJevUsage,
   retryAfterMs,
 } from "../jev-judge.js";
 import type { JudgeInput } from "../langchain-agent-evals.js";
@@ -265,6 +267,89 @@ describe("JevJudge", () => {
   it("reports the judge it is pinned to", () => {
     const judge = new JevJudge({ apiKey: "k", judge: JUDGE });
     expect(judge.identity()).toEqual(JUDGE);
+  });
+});
+
+describe("JevJudge usage", () => {
+  /** A fetch that answers every call with a passing verdict and `usage`. */
+  function answering(usage?: unknown): FetchLike {
+    return async () =>
+      Response.json({
+        model: JUDGE.version,
+        answers: answers({ a: 1, b: 1, overall: 1 }),
+        ...(usage !== undefined ? { usage } : {}),
+      });
+  }
+
+  it("records each answered call's tokens and the cost OpenRouter reported", async () => {
+    const ledger = new UsageLedger();
+    const judge = new JevJudge({
+      apiKey: "k",
+      judge: JUDGE,
+      fetch: answering({
+        input_tokens: 476,
+        output_tokens: 70,
+        cost: 0.000019992,
+      }),
+      usageLedger: ledger,
+    });
+
+    await judge.evaluate(input());
+
+    expect(ledger.drain()).toEqual([
+      {
+        role: "judge",
+        model: JUDGE.version,
+        usage: {
+          promptTokens: 476,
+          completionTokens: 70,
+          totalTokens: 546,
+          costUsd: 0.000019992,
+        },
+      },
+    ]);
+  });
+
+  it("records a call whose answer has no usage block as one without usage", async () => {
+    const ledger = new UsageLedger();
+    const judge = new JevJudge({
+      apiKey: "k",
+      judge: JUDGE,
+      fetch: answering(),
+      usageLedger: ledger,
+    });
+
+    await judge.evaluate(input());
+
+    expect(ledger.drain()).toEqual([{ role: "judge", model: JUDGE.version }]);
+  });
+
+  it("records nothing for a call that never got an answer", async () => {
+    const ledger = new UsageLedger();
+    const judge = new JevJudge({
+      apiKey: "k",
+      judge: JUDGE,
+      fetch: async () => new Response("bad request", { status: 400 }),
+      usageLedger: ledger,
+      sleep: noWait,
+    });
+
+    await judge.evaluate(input());
+
+    expect(ledger.drain()).toEqual([]);
+  });
+
+  it("reads token counts without a cost, and never reads missing counts as zero", () => {
+    expect(
+      readJevUsage({ usage: { input_tokens: 10, output_tokens: 2 } }),
+    ).toEqual({
+      promptTokens: 10,
+      completionTokens: 2,
+      totalTokens: 12,
+    });
+    expect(readJevUsage({ usage: { cost: 0.001 } })).toBeUndefined();
+    expect(readJevUsage({ usage: null })).toBeUndefined();
+    expect(readJevUsage("not an object")).toBeUndefined();
   });
 });
 
