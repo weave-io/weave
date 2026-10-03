@@ -128,6 +128,7 @@ import {
 } from "./tapestry-execution-runner.js";
 import type {
   CaseResultSummary,
+  ErroredSuite,
   ModelMatrixEntry,
   ModelPrices,
   PromptProvenanceManifest,
@@ -536,6 +537,7 @@ interface RawArtifactOutcomes {
  *   - `bundleDir`: path of the written bundle directory
  *   - `partialFailures`: typed `RunnerError` values for suites that returned
  *     hard errors (e.g. fixture load failure), accumulated and surfaced here
+ *   - `erroredSuites`: one warning per suite with cases that produced no score
  *
  * No raw prompt text, transcript content, API keys, or tokens appear
  * in this record.
@@ -589,6 +591,14 @@ export interface EvalRunSummary {
    * suites after recording a partial failure.
    */
   partialFailures: RunnerError[];
+  /**
+   * One warning per suite with cases that produced no score, in suite order
+   * (Spec 37, 16.5). Unlike `partialFailures`, these never make the run exit
+   * non-zero: the cases are reported as errored and the scored ones are
+   * published. Only a run in which nothing was scored fails, with
+   * `NoScoredCases`.
+   */
+  erroredSuites: ErroredSuite[];
 }
 
 // ---------------------------------------------------------------------------
@@ -1319,7 +1329,7 @@ export class EvalOrchestrator {
           runnerResults: nonEmpty.runnerResults,
           partialFailures: [
             ...nonEmpty.partialFailures,
-            ...this.erroredSuiteFailures(nonEmpty.runnerResults),
+            ...this.nothingScoredFailures(nonEmpty.runnerResults),
           ],
         };
 
@@ -1416,19 +1426,52 @@ export class EvalOrchestrator {
   }
 
   /**
-   * The errored-case guard (Spec 37, 16.5): a suite with a case that
-   * produced no score fails with `CasesErrored`, so the run exits 1 and says
-   * which cases were not measured and why.
-   *
-   * The errored cases themselves stay in the run as errored rows: reported,
-   * counted in `erroredCases`, and kept out of pass/fail. This failure only
-   * makes sure a run that did not measure everything it set out to cannot
-   * exit as if it had. Like the empty-suite guard it runs after every model,
-   * so a suite errored on two models gets one failure naming both counts.
+   * The nothing-scored guard: a run that executed cases but errored on every
+   * one of them measured nothing, so it fails with `NoScoredCases` and exits
+   * 1. A run with at least one scored case does not fail here; its errored
+   * cases are warnings (`erroredSuites`), reported but not fatal.
    */
-  private erroredSuiteFailures(
+  private nothingScoredFailures(
     runnerResults: readonly RunnerResult[],
   ): RunnerError[] {
+    const totalCases = runnerResults.reduce((s, rr) => s + rr.totalCases, 0);
+    const erroredCases = runnerResults.reduce(
+      (s, rr) => s + rr.erroredCases,
+      0,
+    );
+    if (totalCases === 0) return [];
+    if (erroredCases < totalCases) return [];
+    const errored = runnerResults.flatMap((result) =>
+      result.caseResults.map((caseResult) => caseResult.summary),
+    );
+    const noun = this.unitNoun(errored, erroredCases);
+    return [
+      {
+        type: "NoScoredCases",
+        erroredCases,
+        message:
+          `Every one of the run's ${erroredCases} ${noun} errored, so nothing was scored (${this.classificationCounts(errored)}). ` +
+          "Check those classifications (model, judge or scoring) before re-running.",
+      },
+    ];
+  }
+
+  /**
+   * The errored-case report (Spec 37, 16.5): one warning per suite with a
+   * case that produced no score, saying which cases were not measured and
+   * why.
+   *
+   * The errored cases themselves stay in the run as errored rows: reported,
+   * counted in `erroredCases`, and kept out of pass/fail. A warning never
+   * makes the run exit non-zero: a few case-level model, judge or scoring
+   * failures in a large matrix are reported with their classifications, not
+   * a reason to discard every case that was scored. Grouping
+   * runs over every model, so a suite errored on two models gets one warning
+   * naming both counts.
+   */
+  private erroredSuiteWarnings(
+    runnerResults: readonly RunnerResult[],
+  ): ErroredSuite[] {
     const bySuite = new Map<string, CaseResultSummary[]>();
     for (const result of runnerResults) {
       const errored = result.caseResults
@@ -1442,7 +1485,6 @@ export class EvalOrchestrator {
     }
 
     return [...bySuite.entries()].map(([suite, errored]) => ({
-      type: "CasesErrored",
       suite,
       erroredCases: errored.length,
       message: this.describeErroredSuite(suite, errored),
@@ -1453,20 +1495,40 @@ export class EvalOrchestrator {
     suite: string,
     errored: readonly CaseResultSummary[],
   ): string {
+    const reasons = this.classificationCounts(errored);
+    const noun = this.unitNoun(errored, errored.length);
+    return (
+      `${errored.length} ${noun} in suite "${suite}" errored and ${errored.length === 1 ? "was" : "were"} not scored (${reasons}). ` +
+      "They are reported as errored, not failed, and left out of the suite's pass rate; re-run them to measure them."
+    );
+  }
+
+  /**
+   * What an errored count counts: with `--repeat N` every attempt of a case
+   * is its own summary (tagged with `attempt` by `tagAttempt`), so the count
+   * is of attempts, as the run report's header already says.
+   */
+  private unitNoun(
+    summaries: readonly CaseResultSummary[],
+    count: number,
+  ): string {
+    const unit = summaries.some((summary) => summary.attempt !== undefined)
+      ? "attempt"
+      : "case";
+    return count === 1 ? unit : `${unit}s`;
+  }
+
+  /** `label ×count` per error classification, sorted by label. */
+  private classificationCounts(errored: readonly CaseResultSummary[]): string {
     const byClassification = new Map<string, number>();
     for (const summary of errored) {
       const label = summary.errorClassification ?? "unknown-error";
       byClassification.set(label, (byClassification.get(label) ?? 0) + 1);
     }
-    const reasons = [...byClassification.entries()]
+    return [...byClassification.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([label, count]) => `${label} ×${count}`)
       .join(", ");
-    const noun = errored.length === 1 ? "case" : "cases";
-    return (
-      `${errored.length} ${noun} in suite "${suite}" errored and ${errored.length === 1 ? "was" : "were"} not scored (${reasons}). ` +
-      "They are reported as errored, not failed; re-run them before reading the suite's scores."
-    );
   }
 
   private describeEmptySuite(suiteId: string, request: EvalRunRequest): string {
@@ -1868,8 +1930,8 @@ export class EvalOrchestrator {
     // Skip writing when there are no results to bundle, or when a publish-mode
     // run errored on every case: a run that scored nothing is never published
     // or indexed (the writer refuses it too, with `NoScoredCases`). The run
-    // report still lists each errored case, and `CasesErrored` makes the run
-    // exit 1. A local run that errored on every case is still written, so it
+    // report still lists each errored case, and `NoScoredCases` makes the
+    // run exit 1. A local run that errored on every case is still written, so it
     // can be inspected and compared.
     const scoredCases = runnerResults.reduce(
       (sum, result) => sum + result.totalCases - result.erroredCases,
@@ -2637,6 +2699,7 @@ export class EvalOrchestrator {
       caseReports: this.buildCaseReports(runnerResults, rawArtifactsByCase),
       repeatabilityDiagnostics,
       partialFailures,
+      erroredSuites: this.erroredSuiteWarnings(runnerResults),
     };
   }
 
@@ -2847,10 +2910,13 @@ export class EvalOrchestrator {
  * Exit codes:
  *   - `0` — orchestration completed and produced a report, even when one or
  *     more eval cases missed their pass threshold (`allSuitesGreen === false`)
- *   - `1` — a hard error occurred or a suite-level partial failure prevented
- *     part of the run from producing results
+ *     or produced no score (`summary.erroredSuites`)
+ *   - `1` — a hard error occurred, a suite-level partial failure prevented
+ *     part of the run from producing results, or every case errored
+ *     (`NoScoredCases`)
  *
- * Threshold misses are data in the published bundle, not process failures. The
+ * Threshold misses and errored cases are data in the published bundle, not
+ * process failures; the run report names each errored suite. The
  * caller may inspect `summary.allSuitesGreen` and `summary.partialFailures` to
  * decide whether to apply a separate quality gate.
  *

@@ -1565,6 +1565,25 @@ export interface CaseResult {
 }
 
 /**
+ * A suite in which one or more cases produced no score: the model's answer
+ * was empty or truncated after every retry, the request failed, or scoring
+ * failed (Spec 37, 16.5). One per affected suite, across every model.
+ *
+ * A warning, not a failure: the cases stay in the run as errored rows, out
+ * of pass/fail, and the run still exits 0 so its scored cases are reported
+ * and published like any other result. `weave eval run` prints each one and,
+ * on GitHub Actions, raises it as a `::warning` annotation.
+ */
+export interface ErroredSuite {
+  /** The suite with errored cases. */
+  suite: string;
+  /** How many of its cases errored, across every model. */
+  erroredCases: number;
+  /** Human-readable description (classification labels only). */
+  message: string;
+}
+
+/**
  * Typed errors produced by eval runners.
  *
  * All runner failures are returned as `Result` / `ResultAsync` values —
@@ -1640,17 +1659,13 @@ export type RunnerError =
     }
   | {
       /**
-       * One or more cases in the suite produced no score: the model's answer
-       * was empty or truncated after every retry, the request failed, or
-       * scoring failed. Added by `EvalOrchestrator` after every model has
-       * run, one per affected suite. The cases stay in the run as errored
-       * rows; this failure is what makes `weave eval run` exit 1 and say so,
-       * because a run with unscored cases did not measure what it set out to.
+       * The run executed cases but every one of them errored, so it measured
+       * nothing. Added by `EvalOrchestrator` after every model has run. A run
+       * with some errored cases and some scored ones is not a failure: its
+       * errored cases are reported as `ErroredSuite` warnings instead (#312).
        */
-      type: "CasesErrored";
-      /** The suite with errored cases. */
-      suite: string;
-      /** How many of its cases errored, across every model. */
+      type: "NoScoredCases";
+      /** How many cases ran, every one of them errored. */
       erroredCases: number;
       /** Human-readable description (classification labels only). */
       message: string;
