@@ -1441,14 +1441,17 @@ export class EvalOrchestrator {
     );
     if (totalCases === 0) return [];
     if (erroredCases < totalCases) return [];
+    const errored = runnerResults.flatMap((result) =>
+      result.caseResults.map((caseResult) => caseResult.summary),
+    );
     const noun = erroredCases === 1 ? "case" : "cases";
     return [
       {
         type: "NoScoredCases",
         erroredCases,
         message:
-          `Every one of the run's ${erroredCases} ${noun} errored, so nothing was scored. ` +
-          "Re-run once the model provider answers.",
+          `Every one of the run's ${erroredCases} ${noun} errored, so nothing was scored (${this.classificationCounts(errored)}). ` +
+          "Check those classifications (model, judge or scoring) before re-running.",
       },
     ];
   }
@@ -1491,20 +1494,25 @@ export class EvalOrchestrator {
     suite: string,
     errored: readonly CaseResultSummary[],
   ): string {
-    const byClassification = new Map<string, number>();
-    for (const summary of errored) {
-      const label = summary.errorClassification ?? "unknown-error";
-      byClassification.set(label, (byClassification.get(label) ?? 0) + 1);
-    }
-    const reasons = [...byClassification.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([label, count]) => `${label} ×${count}`)
-      .join(", ");
+    const reasons = this.classificationCounts(errored);
     const noun = errored.length === 1 ? "case" : "cases";
     return (
       `${errored.length} ${noun} in suite "${suite}" errored and ${errored.length === 1 ? "was" : "were"} not scored (${reasons}). ` +
       "They are reported as errored, not failed, and left out of the suite's pass rate; re-run them to measure them."
     );
+  }
+
+  /** `label ×count` per error classification, sorted by label. */
+  private classificationCounts(errored: readonly CaseResultSummary[]): string {
+    const byClassification = new Map<string, number>();
+    for (const summary of errored) {
+      const label = summary.errorClassification ?? "unknown-error";
+      byClassification.set(label, (byClassification.get(label) ?? 0) + 1);
+    }
+    return [...byClassification.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([label, count]) => `${label} ×${count}`)
+      .join(", ");
   }
 
   private describeEmptySuite(suiteId: string, request: EvalRunRequest): string {

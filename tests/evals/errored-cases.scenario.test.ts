@@ -118,6 +118,15 @@ describe("a reasoning model returns an empty answer every time it is asked", () 
     ]);
   });
 
+  it("names why nothing was scored, without assuming the provider is at fault", async () => {
+    const run = await runCases([CASE], { modelError: EMPTY });
+    const message = run.partialFailures[0]?.message ?? "";
+
+    expect(message).toContain("model-empty-response ×1");
+    expect(message).toContain("model, judge or scoring");
+    expect(message).not.toContain("provider");
+  });
+
   it("publishes the case as errored, with its classification, not as a zero score", async () => {
     const run = await runCases([CASE], { modelError: EMPTY });
 
