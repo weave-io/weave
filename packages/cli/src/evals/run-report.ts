@@ -99,13 +99,15 @@ export class EvalRunReport {
   private erroredLines(summary: EvalRunSummary): string[] {
     if (summary.erroredSuites.length === 0) return [];
     const lines = ["", `  ${this.theme.boldYellow("Not scored:")}`];
+    // With `--repeat N` the rollup counts attempts, as the header says.
+    const unit = summary.metadata.repeatCount > 1 ? "attempt" : "case";
     for (const errored of summary.erroredSuites) {
       lines.push(`    ${this.theme.yellow("!")} ${errored.message}`);
     }
     for (const rollup of summary.modelRollups) {
       if (rollup.erroredCases === 0) continue;
       lines.push(
-        `    ${rollup.modelId}: ${rollup.erroredCases} of ${rollup.totalCases} ${plural(rollup.totalCases, "case")} not scored`,
+        `    ${rollup.modelId}: ${rollup.erroredCases} of ${rollup.totalCases} ${plural(rollup.totalCases, unit)} not scored`,
       );
     }
     return lines;
