@@ -1444,7 +1444,7 @@ export class EvalOrchestrator {
     const errored = runnerResults.flatMap((result) =>
       result.caseResults.map((caseResult) => caseResult.summary),
     );
-    const noun = erroredCases === 1 ? "case" : "cases";
+    const noun = this.unitNoun(errored, erroredCases);
     return [
       {
         type: "NoScoredCases",
@@ -1496,11 +1496,26 @@ export class EvalOrchestrator {
     errored: readonly CaseResultSummary[],
   ): string {
     const reasons = this.classificationCounts(errored);
-    const noun = errored.length === 1 ? "case" : "cases";
+    const noun = this.unitNoun(errored, errored.length);
     return (
       `${errored.length} ${noun} in suite "${suite}" errored and ${errored.length === 1 ? "was" : "were"} not scored (${reasons}). ` +
       "They are reported as errored, not failed, and left out of the suite's pass rate; re-run them to measure them."
     );
+  }
+
+  /**
+   * What an errored count counts: with `--repeat N` every attempt of a case
+   * is its own summary (tagged with `attempt` by `tagAttempt`), so the count
+   * is of attempts, as the run report's header already says.
+   */
+  private unitNoun(
+    summaries: readonly CaseResultSummary[],
+    count: number,
+  ): string {
+    const unit = summaries.some((summary) => summary.attempt !== undefined)
+      ? "attempt"
+      : "case";
+    return count === 1 ? unit : `${unit}s`;
   }
 
   /** `label ×count` per error classification, sorted by label. */

@@ -374,6 +374,23 @@ describe("EvalRunReport — cases that produced no score", () => {
     expect(text).not.toContain("openai/gpt-6-luna: 0 of");
   });
 
+  it("counts attempts, not cases, in a repeated run", () => {
+    const text = render(
+      summary(
+        [caseReport()],
+        {
+          erroredSuites: [WARNING],
+          modelRollups: [rollup("deepseek/deepseek-v4-flash-0731", 1)],
+        },
+        { repeatCount: 3 },
+      ),
+    );
+
+    expect(text).toContain(
+      "deepseek/deepseek-v4-flash-0731: 1 of 98 attempts not scored",
+    );
+  });
+
   it("prints no such section when every case was scored", () => {
     const text = render(summary([caseReport()]));
 

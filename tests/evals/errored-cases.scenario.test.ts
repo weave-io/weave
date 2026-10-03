@@ -262,6 +262,19 @@ describe("one case errors and another is scored", () => {
   });
 });
 
+describe("one case errors on every repeat", () => {
+  it("counts the unscored attempts as attempts, not cases", async () => {
+    const run = await runCases([CASE], { modelError: EMPTY, repeat: 2 });
+
+    expect(run.erroredSuites[0]?.message).toContain(
+      '2 attempts in suite "loom-routing" errored',
+    );
+    expect(run.partialFailures[0]?.message).toContain(
+      "Every one of the run's 2 attempts errored",
+    );
+  });
+});
+
 describe("every case in a local run errors", () => {
   it("cannot look green, and exits non-zero", async () => {
     const run = await runCases([CASE, SECOND_CASE], { modelError: TRUNCATED });
