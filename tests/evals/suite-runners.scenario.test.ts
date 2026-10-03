@@ -798,7 +798,7 @@ describe("the model is unreachable mid-run", () => {
     expect(run.stdout).toContain("Not scored: model-network-failure");
     expect(run.stdout).toContain("1 case, 0 passed, 0 failed, 1 errored");
     expect(run.partialFailures.map((failure) => failure.type)).toEqual([
-      "CasesErrored",
+      "NoScoredCases",
     ]);
     expect(run.exitCode).toBe(1);
     expect(run.firstCase).toMatchObject({

@@ -265,7 +265,7 @@
 - `packages/cli/src/commands/compose.ts` — function runCompose: (ctx) => Promise<Result<number, CliError>>, interface ComposeContext
 - `packages/cli/src/commands/eval.ts`
   - function readPublishMode: (env, string | undefined>) => BundleWriteMode
-  - function printRunReport: (terminal, theme) => (summary: EvalRunSummary) => void
+  - function printRunReport: (terminal, theme, env, string | undefined>) => (summary: EvalRunSummary) => void
   - function runEval: (ctx) => Promise<Result<number, CliError>>
   - interface EvalContext
   - const WEAVE_EVAL_PUBLISH_MODE_ENV_VAR
@@ -640,7 +640,7 @@
   - interface PromptSourceDescriptor
   - interface PromptSnapshot
   - interface RawPromptArtifact
-  - _...62 more_
+  - _...63 more_
 - `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string

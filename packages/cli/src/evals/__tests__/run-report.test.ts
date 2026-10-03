@@ -72,6 +72,7 @@ function summary(
     caseReports,
     repeatabilityDiagnostics: null,
     partialFailures: [],
+    erroredSuites: [],
     ...overrides,
   };
 }
@@ -327,5 +328,55 @@ describe("EvalRunReport — cost per attempt (Spec 39 task 0.6)", () => {
     );
 
     expect(text).not.toContain("Cost per attempt");
+  });
+});
+
+describe("EvalRunReport — cases that produced no score", () => {
+  const NO_COST = {
+    model: { attempts: 0, costed: 0, meanUsd: null, source: null },
+    judge: { attempts: 0, costed: 0, meanUsd: null, source: null },
+  } as const;
+  const rollup = (
+    modelId: string,
+    erroredCases: number,
+  ): EvalRunSummary["modelRollups"][number] => ({
+    modelId,
+    totalCases: 98,
+    passedCases: 98 - erroredCases,
+    failedCases: 0,
+    erroredCases,
+    passRate: 1,
+    cost: NO_COST,
+  });
+  const WARNING = {
+    suite: "warp-security",
+    erroredCases: 1,
+    message:
+      '1 case in suite "warp-security" errored and was not scored (model-truncated-response ×1).',
+  };
+
+  it("names each suite with unscored cases and how many each model left unscored", () => {
+    const text = render(
+      summary([caseReport()], {
+        erroredSuites: [WARNING],
+        modelRollups: [
+          rollup("deepseek/deepseek-v4-flash-0731", 1),
+          rollup("openai/gpt-6-luna", 0),
+        ],
+      }),
+    );
+
+    expect(text).toContain("Not scored:");
+    expect(text).toContain(`! ${WARNING.message}`);
+    expect(text).toContain(
+      "deepseek/deepseek-v4-flash-0731: 1 of 98 cases not scored",
+    );
+    expect(text).not.toContain("openai/gpt-6-luna: 0 of");
+  });
+
+  it("prints no such section when every case was scored", () => {
+    const text = render(summary([caseReport()]));
+
+    expect(text).not.toContain("Not scored:");
   });
 });

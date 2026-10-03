@@ -268,13 +268,38 @@ function renderDryRunSummary(
  * The reporter a live `weave eval run` hands to `buildEvalRunner`: it prints
  * each case's verdict, the dimensions that fell short and where the raw
  * transcript was written, to stdout (Spec 37, 17.2).
+ *
+ * On GitHub Actions (`GITHUB_ACTIONS=true`) it also raises one `::warning`
+ * annotation per suite with cases that produced no score, so a run that
+ * exits 0 with unscored cases still shows them on the run page.
  */
 export function printRunReport(
   terminal: TerminalIO,
   theme: ThemeColors,
+  env: Record<string, string | undefined> = {},
 ): (summary: EvalRunSummary) => void {
   const report = new EvalRunReport(theme);
-  return (summary) => terminal.stdout(report.render(summary));
+  const annotate = env.GITHUB_ACTIONS === "true";
+  return (summary) => {
+    terminal.stdout(report.render(summary));
+    if (!annotate) return;
+    for (const errored of summary.erroredSuites) {
+      terminal.stdout(
+        `::warning title=Eval cases not scored::${escapeAnnotation(errored.message)}`,
+      );
+    }
+  };
+}
+
+/**
+ * Escape a GitHub Actions workflow-command message, so a `%` or a line break
+ * in it cannot end the annotation early or be read as an escape.
+ */
+function escapeAnnotation(message: string): string {
+  return message
+    .replaceAll("%", "%25")
+    .replaceAll("\r", "%0D")
+    .replaceAll("\n", "%0A");
 }
 
 // ---------------------------------------------------------------------------
@@ -441,7 +466,7 @@ async function runEvalRun(ctx: EvalContext): Promise<Result<number, CliError>> {
     ? buildDryRunRunner(reportPartialFailure, ctx.env)
     : await buildLiveRunner(
         reportPartialFailure,
-        printRunReport(terminal, theme),
+        printRunReport(terminal, theme, ctx.env ?? Bun.env),
         ctx.env,
       );
   if (runnerResult.isErr()) {

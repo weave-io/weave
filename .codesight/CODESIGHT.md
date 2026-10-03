@@ -5,7 +5,7 @@
 
 > 0 routes | 0 models | 0 components | 259 lib files | 30 env vars | 9 middleware | 10 events | 0% test coverage
 > **Token savings:** this file is ~23,200 tokens. Without it, AI exploration would cost ~84,600 tokens. **Saves ~61,400 tokens per conversation.**
-> **Last scanned:** 2026-10-01 20:17 — re-run after significant changes
+> **Last scanned:** 2026-10-03 10:33 — re-run after significant changes
 
 ---
 
@@ -276,7 +276,7 @@
 - `packages/cli/src/commands/compose.ts` — function runCompose: (ctx) => Promise<Result<number, CliError>>, interface ComposeContext
 - `packages/cli/src/commands/eval.ts`
   - function readPublishMode: (env, string | undefined>) => BundleWriteMode
-  - function printRunReport: (terminal, theme) => (summary: EvalRunSummary) => void
+  - function printRunReport: (terminal, theme, env, string | undefined>) => (summary: EvalRunSummary) => void
   - function runEval: (ctx) => Promise<Result<number, CliError>>
   - interface EvalContext
   - const WEAVE_EVAL_PUBLISH_MODE_ENV_VAR
@@ -651,7 +651,7 @@
   - interface PromptSourceDescriptor
   - interface PromptSnapshot
   - interface RawPromptArtifact
-  - _...62 more_
+  - _...63 more_
 - `packages/cli/src/evals/warp-security-runner.ts`
   - function extractSecuritySignals: (content) => SecuritySignals
   - function redactSecrets: (raw) => string

@@ -1183,17 +1183,34 @@ public report count outcomes:
 - The run report prints `ERROR` instead of `PASS`/`FAIL`, the classification
   and what it means, no scores, and the raw file path when there is one. The
   header adds `, N errored`.
-- `EvalOrchestrator` adds a `CasesErrored` partial failure for each suite with
-  an errored case, naming the count per classification, so `weave eval run`
-  prints it on stderr and **exits 1**. A threshold miss still exits 0; a run
-  that did not measure everything it set out to does not.
+- `EvalOrchestrator` adds an `ErroredSuite` warning to
+  `EvalRunSummary.erroredSuites` for each suite with an errored case, naming
+  the count per classification. The run report prints them under
+  **Not scored:**, followed by how many cases each model left unscored, and on
+  GitHub Actions (`GITHUB_ACTIONS=true`) `weave eval run` also raises each as
+  a `::warning` annotation on the run page. The run still **exits 0**: an
+  errored case is data about a model or provider, like a threshold miss, not a
+  sign the eval run itself is broken.
+- A run in which **every** case errored measured nothing, so
+  `EvalOrchestrator` adds a `NoScoredCases` partial failure and
+  `weave eval run` **exits 1**.
+
+  _Why the split (#312)._ Until October 2026 any errored case exited 1. In a
+  full-matrix CI run (1,372 cases) one provider hiccup on one model — three
+  empty answers in a row, or a reasoning model spending its whole token cap —
+  turned the job red although every other case was scored and published. A
+  red job that means "a provider blinked" is indistinguishable from the eval
+  system breaking and teaches people to ignore it. The errored cases stay
+  visible (report, annotation, published `erroredCases`) and out of the pass
+  rates; only a run with nothing to show fails.
 - When **every** case in a publish-mode run errored, nothing is published or
   indexed: the orchestrator skips the bundle and
   `ArtifactBundleWriter.writeBundle()` refuses it independently with a typed
   `NoScoredCases` error, as it refuses an empty run with `EmptyRun`. A local
   run in the same state is still written, every case marked errored, so it
   can be inspected and `weave eval compare` can say it has no scored attempt.
-  Either way the run report lists each case and the run exits 1.
+  Either way the run report lists each case and the run exits 1
+  (`NoScoredCases`).
 - Otherwise the errored cases are written and published with the rest. In
   `score-<suite>.json` and `public-report.json` each carries
   `errored: true`, `errorClassification`, `passed: false`, and (in the public

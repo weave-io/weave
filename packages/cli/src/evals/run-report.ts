@@ -13,7 +13,9 @@
  * pass rate over the repeats (errored attempts left out and counted
  * separately), then the same breakdown for each attempt that did not pass.
  *
- * After the cases it prints the mean cost per attempt of each model's own
+ * After the cases it names every suite with cases that produced no score and
+ * how many each model left unscored, so a provider that stopped answering
+ * stands out without failing the run, then the mean cost per attempt of each model's own
  * calls and of the judge's calls, marking a mean that leaves out attempts
  * with no recorded cost (see `attempt-usage.ts`).
  *
@@ -80,8 +82,33 @@ export class EvalRunReport {
         lines.push("", ...this.caseLines(report));
       }
     }
-    lines.push(...this.costLines(summary), ...this.footer(summary), "");
+    lines.push(
+      ...this.erroredLines(summary),
+      ...this.costLines(summary),
+      ...this.footer(summary),
+      "",
+    );
     return lines.join("\n");
+  }
+
+  /**
+   * The suites with cases that produced no score, and how many each model
+   * left unscored. Warnings, not failures: the run still exits 0 when any
+   * case was scored (Spec 37, 16.5).
+   */
+  private erroredLines(summary: EvalRunSummary): string[] {
+    if (summary.erroredSuites.length === 0) return [];
+    const lines = ["", `  ${this.theme.boldYellow("Not scored:")}`];
+    for (const errored of summary.erroredSuites) {
+      lines.push(`    ${this.theme.yellow("!")} ${errored.message}`);
+    }
+    for (const rollup of summary.modelRollups) {
+      if (rollup.erroredCases === 0) continue;
+      lines.push(
+        `    ${rollup.modelId}: ${rollup.erroredCases} of ${rollup.totalCases} ${plural(rollup.totalCases, "case")} not scored`,
+      );
+    }
+    return lines;
   }
 
   /**
