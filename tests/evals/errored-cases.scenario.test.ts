@@ -7,8 +7,10 @@
  * budget reasoning: a typed `EmptyResponse` or `TruncatedResponse`.
  *
  * The promises: such an answer is reported as **errored**, never scored as a
- * model failure; the run asks again a bounded number of times first; and a
- * run in which nothing was scored can never look green or publish anything.
+ * model failure; the run asks again a bounded number of times first; a run
+ * with some cases scored still exits 0 and names the unscored ones as
+ * warnings; and a run in which nothing was scored can never look green,
+ * publish anything, or exit 0.
  */
 
 import { describe, expect, it } from "bun:test";
@@ -96,14 +98,24 @@ describe("a reasoning model returns an empty answer every time it is asked", () 
     expect(run.modelCalls).toHaveLength(3);
   });
 
-  it("exits non-zero and says which suite has unscored cases", async () => {
+  it("says which suite has unscored cases, and why", async () => {
     const run = await runCases([CASE], { modelError: EMPTY });
-    const failure = run.partialFailures[0];
+    const warning = run.erroredSuites[0];
+
+    expect(warning?.suite).toBe("loom-routing");
+    expect(warning?.erroredCases).toBe(1);
+    expect(warning?.message).toContain('"loom-routing"');
+    expect(warning?.message).toContain("model-empty-response ×1");
+    expect(run.stdout).toContain(`! ${warning?.message}`);
+  });
+
+  it("exits non-zero, because the run scored nothing at all", async () => {
+    const run = await runCases([CASE], { modelError: EMPTY });
 
     expect(run.exitCode).toBe(1);
-    expect(failure?.type).toBe("CasesErrored");
-    expect(failure?.message).toContain('"loom-routing"');
-    expect(failure?.message).toContain("model-empty-response ×1");
+    expect(run.partialFailures.map((failure) => failure.type)).toEqual([
+      "NoScoredCases",
+    ]);
   });
 
   it("publishes the case as errored, with its classification, not as a zero score", async () => {
@@ -204,11 +216,40 @@ describe("one case errors and another is scored", () => {
     });
   });
 
-  it("still exits non-zero, because not every case was measured", async () => {
+  it("exits zero, because what was scored is a result like any other", async () => {
     const run = await mixedRun();
 
     expect(run.stdout).toContain("2 cases, 1 passed, 0 failed, 1 errored");
-    expect(run.exitCode).toBe(1);
+    expect(run.partialFailures).toEqual([]);
+    expect(run.exitCode).toBe(0);
+  });
+
+  it("names the unscored case's suite and model under Not scored", async () => {
+    const run = await mixedRun();
+
+    expect(run.stdout).toContain("Not scored:");
+    expect(run.stdout).toContain(
+      '1 case in suite "loom-routing" errored and was not scored (model-empty-response ×1)',
+    );
+    expect(run.stdout).toContain(`${EVAL_MODEL}: 1 of 2 cases not scored`);
+  });
+
+  it("raises the unscored suite as a warning annotation on GitHub Actions", async () => {
+    const run = await runCases([CASE, SECOND_CASE], {
+      modelErrorsFirst: [EMPTY, EMPTY, EMPTY],
+      env: { OPENROUTER_API_KEY: "test-key", GITHUB_ACTIONS: "true" },
+    });
+
+    expect(run.stdout).toContain(
+      '::warning title=Eval cases not scored::1 case in suite "loom-routing" errored',
+    );
+    expect(run.exitCode).toBe(0);
+  });
+
+  it("raises no annotation outside GitHub Actions", async () => {
+    const run = await mixedRun();
+
+    expect(run.stdout).not.toContain("::warning");
   });
 });
 
