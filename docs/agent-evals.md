@@ -1189,8 +1189,12 @@ public report count outcomes:
   **Not scored:**, followed by how many cases each model left unscored, and on
   GitHub Actions (`GITHUB_ACTIONS=true`) `weave eval run` also raises each as
   a `::warning` annotation on the run page. The run still **exits 0**: an
-  errored case is data about a model or provider, like a threshold miss, not a
-  sign the eval run itself is broken.
+  errored case is a case-level model, judge or scoring failure, reported with
+  its classification like a threshold miss is reported with its scores, not a
+  reason to discard the rest of the run. Read the classifications: a
+  `model-*` label usually points at the model or its provider, but a
+  `judge-*` or `scoring-*` label (or the same label across many cases) can be
+  a defect in the eval itself and is worth investigating.
 - A run in which **every** case errored measured nothing, so
   `EvalOrchestrator` adds a `NoScoredCases` partial failure and
   `weave eval run` **exits 1**.
@@ -1199,8 +1203,8 @@ public report count outcomes:
   full-matrix CI run (1,372 cases) one provider hiccup on one model — three
   empty answers in a row, or a reasoning model spending its whole token cap —
   turned the job red although every other case was scored and published. A
-  red job that means "a provider blinked" is indistinguishable from the eval
-  system breaking and teaches people to ignore it. The errored cases stay
+  red job for a handful of unscored cases says neither which cases nor why,
+  and teaches people to ignore it. The errored cases stay
   visible (report, annotation, published `erroredCases`) and out of the pass
   rates; only a run with nothing to show fails.
 - When **every** case in a publish-mode run errored, nothing is published or

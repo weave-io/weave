@@ -1463,8 +1463,9 @@ export class EvalOrchestrator {
    *
    * The errored cases themselves stay in the run as errored rows: reported,
    * counted in `erroredCases`, and kept out of pass/fail. A warning never
-   * makes the run exit non-zero: one provider hiccup in a large matrix is
-   * data about that model, not a reason to call the run broken. Grouping
+   * makes the run exit non-zero: a few case-level model, judge or scoring
+   * failures in a large matrix are reported with their classifications, not
+   * a reason to discard every case that was scored. Grouping
    * runs over every model, so a suite errored on two models gets one warning
    * naming both counts.
    */
