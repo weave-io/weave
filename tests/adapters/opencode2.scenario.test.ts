@@ -173,13 +173,15 @@ describe("a user installs Weave on an OpenCode 2 host that can run the models it
     expect(host.agent("thread").model).toEqual(model("claude-haiku-4-5"));
   });
 
-  it("gives the OpenAI-first agents their Anthropic fallback on an Anthropic-only host", async () => {
+  it("takes the next Claude entry for an agent whose first choice the host does not list", async () => {
     const host = await load({ host: ANTHROPIC_HOST });
     const model = (id: string) => ({ providerID: "anthropic", id });
 
     expect(host.agent("weft").model).toEqual(model("claude-opus-5-5"));
     expect(host.agent("warp").model).toEqual(model("claude-opus-5-5"));
-    expect(host.agent("spindle").model).toEqual(model("claude-haiku-4-5"));
+    expect(host.agent("spindle").model).toEqual(model("claude-sonnet-5-5"));
+    // The host lists no Haiku 5.5, so Thread takes its Haiku 4.5 fallback.
+    expect(host.agent("thread").model).toEqual(model("claude-haiku-4-5"));
   });
 
   it("gives the Anthropic-first agents their OpenAI fallback on an OpenAI-only host", async () => {
@@ -427,10 +429,10 @@ describe("a user installs Weave on an OpenCode 2 host signed in to GitHub Copilo
     expect(host.agent("loom").model).toEqual(model("claude-opus-5.5"));
     expect(host.agent("tapestry").model).toEqual(model("claude-opus-5.5"));
     expect(host.agent("pattern").model).toEqual(model("claude-opus-5.5"));
-    expect(host.agent("weft").model).toEqual(model("gpt-6-sol"));
-    expect(host.agent("warp").model).toEqual(model("gpt-6-sol"));
+    expect(host.agent("weft").model).toEqual(model("claude-opus-5.5"));
+    expect(host.agent("warp").model).toEqual(model("claude-opus-5.5"));
     expect(host.agent("shuttle").model).toEqual(model("claude-sonnet-5.5"));
-    expect(host.agent("spindle").model).toEqual(model("gpt-6-luna"));
+    expect(host.agent("spindle").model).toEqual(model("claude-sonnet-5.5"));
     expect(host.agent("thread").model).toEqual(model("claude-haiku-4.5"));
   });
 

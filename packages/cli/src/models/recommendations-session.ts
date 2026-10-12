@@ -46,7 +46,13 @@ import { type FileSystem, toConfigFileReader } from "../fs/file-system.js";
 /** What a test (or a local proof) may replace. Defaults are production. */
 export type CliModelRecommendationsDeps = Pick<
   ModelRecommendationsDeps,
-  "fetch" | "files" | "shell" | "publicKeys" | "baseUrl" | "uniqueId"
+  | "fetch"
+  | "files"
+  | "shell"
+  | "publicKeys"
+  | "baseUrl"
+  | "uniqueId"
+  | "builtinModelsIssued"
 >;
 
 /** How a command uses the session, as opposed to what a test replaces. */
@@ -124,6 +130,9 @@ export class RecommendationsSession {
     });
     this.verifier = new ModelRecommendationsVerifier({
       ...(deps.publicKeys === undefined ? {} : { publicKeys: deps.publicKeys }),
+      ...(deps.builtinModelsIssued === undefined
+        ? {}
+        : { builtinModelsIssued: deps.builtinModelsIssued }),
       now: this.now,
     });
   }
@@ -147,6 +156,9 @@ export class RecommendationsSession {
       ...(this.deps.publicKeys === undefined
         ? {}
         : { publicKeys: this.deps.publicKeys }),
+      ...(this.deps.builtinModelsIssued === undefined
+        ? {}
+        : { builtinModelsIssued: this.deps.builtinModelsIssued }),
     }).mapErr(
       (errors): CliError => ({
         type: "ParseFailure",

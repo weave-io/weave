@@ -7,6 +7,11 @@ import { generateKeyPair } from "../keygen.js";
 import { type SignFileIo, signFiles, signList } from "../sign.js";
 
 const NOW = new Date("2026-10-02T12:00:00Z");
+/** The builtin baseline the fixture list was written against. */
+const PINNED = {
+  now: () => NOW,
+  builtinModelsIssued: "2026-09-29T09:11:44Z",
+};
 
 const list = `${JSON.stringify(
   {
@@ -28,12 +33,13 @@ describe("scripts/models/sign.ts", () => {
       await signList(
         list,
         keys.privateKey,
-        new ModelRecommendationsVerifier({ now: () => NOW }),
+        new ModelRecommendationsVerifier(PINNED),
       )
     )._unsafeUnwrap();
 
     expect(JSON.parse(envelope).payload).toBe(list);
     const client = new ModelRecommendationsVerifier({
+      ...PINNED,
       publicKeys: [keys.publicKey],
       now: () => NOW,
     });
@@ -44,6 +50,7 @@ describe("scripts/models/sign.ts", () => {
   it("refuses to sign a list a client would reject", async () => {
     const keys = (await generateKeyPair())._unsafeUnwrap();
     const expired = new ModelRecommendationsVerifier({
+      ...PINNED,
       now: () => new Date("2027-01-01T00:00:00Z"),
     });
     const result = await signList(list, keys.privateKey, expired);
@@ -59,7 +66,7 @@ describe("scripts/models/sign.ts", () => {
     const result = await signList(
       list,
       keys.publicKey,
-      new ModelRecommendationsVerifier({ now: () => NOW }),
+      new ModelRecommendationsVerifier(PINNED),
     );
     expect(result._unsafeUnwrapErr().type).toBe("SignFailed");
   });
@@ -75,7 +82,7 @@ describe("scripts/models/sign.ts", () => {
     const result = await signList(
       big,
       keys.privateKey,
-      new ModelRecommendationsVerifier({ now: () => NOW }),
+      new ModelRecommendationsVerifier(PINNED),
     );
     expect(result._unsafeUnwrapErr().type).toBe("EnvelopeInvalid");
   });
@@ -101,7 +108,7 @@ describe("scripts/models/sign.ts", () => {
       }
     }
 
-    const verifier = () => new ModelRecommendationsVerifier({ now: () => NOW });
+    const verifier = () => new ModelRecommendationsVerifier(PINNED);
 
     it("reads the list and key and writes the envelope", async () => {
       const keys = (await generateKeyPair())._unsafeUnwrap();

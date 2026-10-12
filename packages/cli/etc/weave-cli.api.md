@@ -57,7 +57,7 @@ export type CliError = InvalidArgsError | MissingFileError | FileReadError | Fil
 // Warning: (ae-forgotten-export) The symbol "ModelRecommendationsDeps" needs to be exported by the entry point index.d.ts
 //
 // @public
-export type CliModelRecommendationsDeps = Pick<ModelRecommendationsDeps, "fetch" | "files" | "shell" | "publicKeys" | "baseUrl" | "uniqueId">;
+export type CliModelRecommendationsDeps = Pick<ModelRecommendationsDeps, "fetch" | "files" | "shell" | "publicKeys" | "baseUrl" | "uniqueId" | "builtinModelsIssued">;
 
 // @public (undocumented)
 export type Command = "help" | "version" | "init" | "validate" | "run" | "prompt" | "runtime" | "eval" | "compose" | "models" | "unknown";

@@ -15,6 +15,13 @@ import {
 } from "@weaveio/weave-config";
 import { errAsync, okAsync, type ResultAsync } from "neverthrow";
 
+/**
+ * The builtin baseline these scenarios' fixture lists were written against.
+ * Scenarios pin it so moving the real `BUILTIN_MODELS_ISSUED` does not
+ * invalidate their lists as `OlderThanBuiltins`.
+ */
+export const PINNED_BUILTIN_MODELS_ISSUED = "2026-09-29T09:11:44Z";
+
 /** An Ed25519 key pair, both halves base64 (raw public, PKCS #8 private). */
 export interface SigningKeys {
   readonly publicKey: string;

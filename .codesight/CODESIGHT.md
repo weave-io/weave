@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 259 lib files | 30 env vars | 9 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~23,200 tokens. Without it, AI exploration would cost ~84,600 tokens. **Saves ~61,400 tokens per conversation.**
-> **Last scanned:** 2026-10-12 20:17 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 260 lib files | 30 env vars | 9 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~23,300 tokens. Without it, AI exploration would cost ~84,900 tokens. **Saves ~61,600 tokens per conversation.**
+> **Last scanned:** 2026-10-12 20:47 — re-run after significant changes
 
 ---
 
@@ -634,6 +634,14 @@
   - function buildUserMessage: (evalCase) => string
   - class TapestryExecutionRunner
   - _...5 more_
+- `packages/cli/src/evals/thread-exploration-runner.ts`
+  - function extractThreadExplorationSignals: (content) => ThreadExplorationSignals
+  - function redactSecrets: (raw) => string
+  - function buildUserMessage: (evalCase) => string
+  - class ThreadExplorationRunner
+  - interface ThreadExplorationSignals
+  - interface ThreadExplorationRunnerOptions
+  - _...2 more_
 - `packages/cli/src/evals/trajectory-case-executor.ts`
   - function hasTrajectoryCases: (items) => boolean
   - class TrajectoryCaseExecutor
@@ -1323,12 +1331,12 @@
 
 ## Most Imported Files (change these carefully)
 
-- `packages/cli/src/evals/types.ts` — imported by **55** files
+- `packages/cli/src/evals/types.ts` — imported by **56** files
 - `packages/cli/src/fs/file-system.ts` — imported by **34** files
 - `packages/cli/src/io/terminal.ts` — imported by **30** files
 - `packages/cli/src/theme/colors.ts` — imported by **29** files
-- `packages/cli/src/evals/openrouter-client.ts` — imported by **19** files
-- `packages/cli/src/evals/attempt-usage.ts` — imported by **18** files
+- `packages/cli/src/evals/openrouter-client.ts` — imported by **20** files
+- `packages/cli/src/evals/attempt-usage.ts` — imported by **19** files
 - `packages/cli/src/args.ts` — imported by **17** files
 - `packages/adapters/opencode2/src/sdk-types.ts` — imported by **16** files
 - `packages/engine/src/runtime/types.ts` — imported by **16** files
@@ -1341,17 +1349,17 @@
 - `packages/cli/src/evals/case-loader.ts` — imported by **12** files
 - `packages/cli/src/evals/eval-track.ts` — imported by **12** files
 - `packages/cli/src/prompt/index.ts` — imported by **11** files
+- `packages/cli/src/evals/case-outcomes.ts` — imported by **11** files
 - `packages/engine/src/compose.ts` — imported by **11** files
-- `packages/engine/src/runtime/errors.ts` — imported by **11** files
 
 ## Import Map (who imports what)
 
-- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/attempt-usage.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +50 more
+- `packages/cli/src/evals/types.ts` ← `packages/cli/src/evals/__tests__/attempt-usage.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/case-loader.test.ts`, `packages/cli/src/evals/__tests__/eval-track.test.ts`, `packages/cli/src/evals/__tests__/input-validation.test.ts` +51 more
 - `packages/cli/src/fs/file-system.ts` ← `packages/cli/src/__tests__/file-system.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/init.test.ts`, `packages/cli/src/commands/__tests__/legacy-upgrade-regression.test.ts`, `packages/cli/src/commands/__tests__/migrate-conversion.test.ts` +29 more
 - `packages/cli/src/io/terminal.ts` ← `packages/cli/src/__tests__/routing.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +25 more
 - `packages/cli/src/theme/colors.ts` ← `packages/cli/src/__tests__/theme.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +24 more
-- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/attempt-usage.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/tapestry-category-routing-runner.test.ts` +14 more
-- `packages/cli/src/evals/attempt-usage.ts` ← `packages/cli/src/evals/__tests__/jev-judge.test.ts`, `packages/cli/src/evals/__tests__/model-comparison.test.ts`, `packages/cli/src/evals/compare-report.ts`, `packages/cli/src/evals/jev-judge.ts`, `packages/cli/src/evals/loom-routing-runner.ts` +13 more
+- `packages/cli/src/evals/openrouter-client.ts` ← `packages/cli/src/evals/__tests__/attempt-usage.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.test.ts`, `packages/cli/src/evals/__tests__/loom-routing-runner.trajectory.test.ts`, `packages/cli/src/evals/__tests__/runner.test.ts`, `packages/cli/src/evals/__tests__/tapestry-category-routing-runner.test.ts` +15 more
+- `packages/cli/src/evals/attempt-usage.ts` ← `packages/cli/src/evals/__tests__/jev-judge.test.ts`, `packages/cli/src/evals/__tests__/model-comparison.test.ts`, `packages/cli/src/evals/compare-report.ts`, `packages/cli/src/evals/jev-judge.ts`, `packages/cli/src/evals/loom-routing-runner.ts` +14 more
 - `packages/cli/src/args.ts` ← `packages/cli/src/__tests__/args.test.ts`, `packages/cli/src/cli.ts`, `packages/cli/src/commands/__tests__/config-validation-errors.test.ts`, `packages/cli/src/commands/__tests__/eval.test.ts`, `packages/cli/src/commands/__tests__/init.test.ts` +12 more
 - `packages/adapters/opencode2/src/sdk-types.ts` ← `packages/adapters/opencode2/src/__tests__/reconcile-agent.test.ts`, `packages/adapters/opencode2/src/adapter.ts`, `packages/adapters/opencode2/src/errors.ts`, `packages/adapters/opencode2/src/plugin.ts`, `packages/adapters/opencode2/src/reconcile-agent.ts` +11 more
 - `packages/engine/src/runtime/types.ts` ← `packages/engine/src/__tests__/runtime-command-operations.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts`, `packages/engine/src/__tests__/status-control.test.ts` +11 more
@@ -1377,7 +1385,7 @@
 # Test Coverage
 
 > **0%** of routes and models are covered by tests
-> 260 test files found
+> 261 test files found
 
 ---
 
