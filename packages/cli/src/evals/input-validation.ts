@@ -365,7 +365,7 @@ function validateConfigMode(
  * - Logical agent names (`loom`, `tapestry`) match `shouldRunSuite()` in the
  *   orchestrator's `agentName` branch.
  * - Suite names (`loom-routing`, `tapestry-execution`, `shuttle-execution`,
- *   `spindle-tools`, `pattern-planning`, `weft-review`, `warp-security`)
+ *   `spindle-tools`, `thread-exploration`, `pattern-planning`, `weft-review`, `warp-security`)
  *   match the `suiteName` branch.
  *
  * Unknown values fail closed with a typed `UnknownAgentFilter` error so that

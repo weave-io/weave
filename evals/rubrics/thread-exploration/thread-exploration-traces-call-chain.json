@@ -1,0 +1,10 @@
+{
+  "case_id": "thread-exploration-traces-call-chain",
+  "suite": "thread-exploration",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fail the answer if it leaves out a hop between the route and the INSERT (the service, pricing or repository step), if it puts hops in the wrong order, if a cited line does not hold the code described, or if it claims behaviour the excerpt does not show (for example transactions, retries or validation of the request body). Mentioning that an empty order throws (`src/services/orders.ts`) is correct and optional. Report layout is not scored."
+  }
+}

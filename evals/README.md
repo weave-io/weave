@@ -4,7 +4,7 @@
 
 This directory contains the canonical fixture files for `weave eval run`. It is the **allowlist source of truth** for model matrix entries, eval cases, and rubric scoring metadata.
 
-Today that fixture surface covers exactly **eight text-only suite families**: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. Three of them (`loom-routing`, `tapestry-execution`, `shuttle-execution`) also hold `harness_trajectory` cases, which run a real harness session in a sandbox; their fixture projects live under `fixtures/`.
+Today that fixture surface covers exactly **nine text-only suite families**: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `thread-exploration`, `pattern-planning`, `weft-review`, and `warp-security`. Three of them (`loom-routing`, `tapestry-execution`, `shuttle-execution`) also hold `harness_trajectory` cases, which run a real harness session in a sandbox; their fixture projects live under `fixtures/`.
 
 For the full eval guide — architecture, CI model, sanitization rules, raw-artifact policy, and prompt-hash provenance — see [`docs/agent-evals.md`](../docs/agent-evals.md).
 
@@ -77,6 +77,20 @@ evals/
 │   │   ├── spindle-tools-answers-the-question-asked.json   # research behaviour
 │   │   ├── spindle-tools-calibrates-low-confidence.json   # research behaviour
 │   │   └── spindle-tools-local-code-out-of-scope.json   # research behaviour
+│   ├── thread-exploration/             # Thread codebase-exploration eval cases
+│   │   ├── thread-exploration-exact-paths-and-lines.json   # exploration behaviour
+│   │   ├── thread-exploration-traces-call-chain.json   # exploration behaviour
+│   │   ├── thread-exploration-finds-usages-through-alias.json   # exploration behaviour
+│   │   ├── thread-exploration-traces-import-chain.json   # exploration behaviour
+│   │   ├── thread-exploration-says-not-found.json   # exploration behaviour
+│   │   ├── thread-exploration-separates-found-from-inferred.json   # exploration behaviour
+│   │   ├── thread-exploration-does-not-edit-when-asked-to-fix.json   # exploration behaviour
+│   │   ├── thread-exploration-marks-external-docs-out-of-scope.json   # exploration behaviour
+│   │   ├── thread-exploration-assumes-and-finishes-on-ambiguity.json   # exploration behaviour
+│   │   ├── thread-exploration-distinguishes-same-named-symbols.json   # exploration behaviour
+│   │   ├── thread-exploration-report-another-agent-can-act-on.json   # exploration behaviour
+│   │   ├── thread-exploration-summarises-module-role.json   # exploration behaviour
+│   │   └── thread-exploration-does-not-speculate-on-unread-code.json   # exploration behaviour
 │   ├── pattern-planning/               # Pattern planning structure eval cases
 │   │   ├── pattern-plan-settings-refactor.json
 │   │   ├── pattern-plan-release-checklist.json
@@ -177,6 +191,7 @@ evals/
     │   ├── spindle-tools-answers-the-question-asked.json
     │   ├── spindle-tools-calibrates-low-confidence.json
     │   └── spindle-tools-local-code-out-of-scope.json
+    ├── thread-exploration/             # Scoring rubrics for thread-exploration cases (one per case, same ids)
     ├── pattern-planning/               # Scoring rubrics for pattern-planning cases
     │   ├── pattern-plan-settings-refactor.json
     │   ├── pattern-plan-release-checklist.json
@@ -283,6 +298,7 @@ Every text-only case may assert only what is visible in assistant or user text. 
 | `tapestry-category-routing` | Verify Tapestry routes to the correct category shuttle agent |
 | `shuttle-execution`         | Verify Shuttle mirrors delegated task structure and final evidence reporting from text |
 | `spindle-tools`             | Verify Spindle cites sources, separates source facts from interpretation, reports confidence, and handles its sources honestly (not found, conflicting, dated, out of scope), from text |
+| `thread-exploration`        | Verify Thread answers a codebase question from the files it read: exact `path:line` evidence, a found-versus-inferred confidence statement, and honest behaviour at the edges (not found, read-only, out of scope, ambiguity), from text |
 | `pattern-planning`          | Verify Pattern emits structurally strong implementation plans |
 | `weft-review`               | Verify Weft emits structurally valid approve/reject reviews, and rejects for the right reason |
 | `warp-security`             | Verify Warp emits text-only security triage and finding structure |
@@ -312,7 +328,7 @@ Every text-only case may assert only what is visible in assistant or user text. 
 | `delegation_chain` | `chain` (≥2 agents)                           | Verify an ordered delegation chain   |
 | `tool_call`        | `tool_name`, `payload_contains` (optional)    | Verify a tool was invoked            |
 
-`tool_call` exists in the shared schema for forward compatibility, but it is **forbidden** in the eight currently registered text-only suite families. The suite registry in `packages/cli/src/evals/types.ts` rejects it before dry-run or live execution.
+`tool_call` exists in the shared schema for forward compatibility, but it is **forbidden** in the nine currently registered text-only suite families. The suite registry in `packages/cli/src/evals/types.ts` rejects it before dry-run or live execution.
 
 ### Pattern-planning fixture guidance
 
@@ -513,6 +529,45 @@ Unsupported runtime-only assertions (for example `tool_call`, `tool_called`,
 `no_tool_called`, or `role: "tool"`) are rejected by the shared text-only
 fixture contract before execution.
 
+### Thread-exploration fixture guidance
+
+`thread-exploration` cases must remain text-observable, and a text run gives
+Thread no tools. Each case therefore carries the files Thread would have read,
+as a small fake project, and one question. The runner tells the model that the
+files shown are everything it has read and that their line numbers are exact;
+Thread's own prompt decides the shape of the report.
+
+Every case requires the `thread_locations_cited` signal (at least one
+`path:line` location in the answer) and the `thread_confidence_stated` signal
+(a confidence statement that says what was found and what was inferred), except
+`says-not-found`, which reports nothing to locate and requires only the
+confidence. The judge scores the case. Each case also tests one exploration
+behaviour: exact locations for every symbol, a call chain with no missing hop,
+usages found through a re-export alias, an import chain followed to its origin,
+saying a symbol is not in the code, separating found from inferred, staying
+read-only when asked to fix, marking external documentation out of scope,
+finishing an ambiguous question with a stated assumption, telling two
+same-named symbols apart, a report another agent can act on, a module
+summary, and not guessing what an unread file does. Write those cases like this:
+
+- Start the description with `Exploration question:`, then show each file as
+  a backticked path followed by a fenced block whose lines are numbered
+  `line | code` from 1, and use invented project names so the model cannot
+  answer from memory. A file the question needs but the case does not show is
+  named only in a directory listing marked as not read.
+- Put the behaviour in `expected_outcome.description` and the rubric notes,
+  never in the description: the runner shows the model the description only.
+  Cite line numbers in the expected outcome from the fixture's own numbering.
+- Name the one required behaviour in the expected outcome and say what is
+  optional. Rubric notes start with what still fails a well-formed report
+  ("Fail the answer if ...") and say which near-misses pass.
+- Check the case with a live run on two models (the judge output shows
+  whether a failure is the model's or the case's) before adding it.
+
+`packages/cli/src/evals/__tests__/thread-exploration-corpus.test.ts` guards
+these rules, including that the numbering is right and every line the expected
+outcome cites exists.
+
 ### Weft-review fixture guidance
 
 `weft-review` cases must remain synthetic and text-observable. Encode the
@@ -661,7 +716,7 @@ Rejected examples include:
 
 Recommended authoring pattern for new cases:
 
-1. choose one of the eight registered suites
+1. choose one of the nine registered suites
 2. encode the full scenario in fixture text and the synthetic runner prompt, with no hidden repo dependency
 3. assert only structural, text-visible signals such as agent names, headings, verdict tags, file references, artifact names, blocker counts, and acceptance confirmations
 4. verify with `weave eval run --case <case-id> --dry-run` before any live run
@@ -679,7 +734,7 @@ assert hidden browser/search/network events.
 | `agent_mentioned`    | `agent_name`          | Agent name appears in at least one assistant msg |
 | `no_tool_called`     | `tool_name`           | Negative assertion: tool must NOT appear         |
 
-The table above describes the shared schema surface, not the current per-suite allowlist. For the eight registered text-only suites, contributors may safely use only text-visible checks. `tool_called`, `no_tool_called`, and `content_contains` with `role: "tool"` are forbidden by the suite registry even though they still exist in the broader schema for future expansion.
+The table above describes the shared schema surface, not the current per-suite allowlist. For the nine registered text-only suites, contributors may safely use only text-visible checks. `tool_called`, `no_tool_called`, and `content_contains` with `role: "tool"` are forbidden by the suite registry even though they still exist in the broader schema for future expansion.
 
 ## Rubric Files (`rubrics/<suite>/<case-id>.json`)
 

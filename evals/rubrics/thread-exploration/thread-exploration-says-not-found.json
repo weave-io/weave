@@ -1,0 +1,10 @@
+{
+  "case_id": "thread-exploration-says-not-found",
+  "suite": "thread-exploration",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fail the answer if it names any rate limiter as present (a file, function, middleware or package such as `rateLimit` or `express-rate-limit`) or says one exists, if it presents the `limit` page-size cap as the rate limiting, or if it gives a vague answer with no clear statement that none was found in the provided code. Saying that a limiter might exist in files it has not read, or in a proxy, is correct when marked as unverified. Line numbers are not required in an answer that reports nothing found."
+  }
+}

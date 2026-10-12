@@ -1,0 +1,22 @@
+{
+  "id": "thread-exploration-marks-external-docs-out-of-scope",
+  "description": "Exploration question: What does the `backoff: \"decorrelated\"` option mean in the `fetchlib` library, and which `fetchlib` version added it?\n\nFiles read (every line is numbered as `line | code`; this is everything that has been read):\n\n`package.json`\n```\n1 | {\n2 |   \"name\": \"mirror\",\n3 |   \"dependencies\": {\n4 |     \"fetchlib\": \"^3.2.0\"\n5 |   }\n6 | }\n```\n\n`src/net/fetcher.ts`\n```\n1 | import { createFetcher } from \"fetchlib\";\n2 | \n3 | export const fetcher = createFetcher({\n4 |   baseUrl: process.env.UPSTREAM_URL,\n5 |   retry: { attempts: 4, backoff: \"decorrelated\" },\n6 |   timeoutMs: 8000,\n7 | });\n```",
+  "suite": "thread-exploration",
+  "allowed_agents": [
+    "thread"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report that gives what the repository shows (the option is set at `src/net/fetcher.ts:5` with `attempts: 4`; `fetchlib` is declared as `^3.2.0` at `package.json:4`) and says that what the option means in the library and the version that added it are outside a codebase exploration: they need the library's documentation or changelog, so it does not answer them.",
+    "required_artifacts": [
+      "thread_locations_cited",
+      "thread_confidence_stated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "exploration",
+    "out-of-scope"
+  ]
+}

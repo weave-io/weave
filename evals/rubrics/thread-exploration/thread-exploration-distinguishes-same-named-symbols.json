@@ -1,0 +1,10 @@
+{
+  "case_id": "thread-exploration-distinguishes-same-named-symbols",
+  "suite": "thread-exploration",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fail the answer if it attributes both billing files to the same `getUser`, swaps the two, or describes one definition as doing what the other does. It must resolve each call through the import line. Line numbers must hold the code described."
+  }
+}

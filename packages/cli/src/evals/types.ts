@@ -159,6 +159,13 @@ export const EVAL_SUITE_REGISTRY: readonly EvalSuiteMetadata[] = [
     allowedContentRoles: ["user", "assistant"],
   },
   {
+    suiteId: "thread-exploration",
+    shortAgentFilter: "thread",
+    allowedExpectedOutcomeKinds: ["task_completion"],
+    allowedTranscriptChecks: ["content_contains", "agent_mentioned"],
+    allowedContentRoles: ["user", "assistant"],
+  },
+  {
     suiteId: "pattern-planning",
     shortAgentFilter: "pattern",
     allowedExpectedOutcomeKinds: ["task_completion"],
@@ -502,7 +509,7 @@ export const EvalCaseSchema = z.object({
   /**
    * The eval suite this case belongs to.
    * Convention: `loom-routing` | `tapestry-execution` |
-   * `shuttle-execution` | `spindle-tools` | `pattern-planning` |
+   * `shuttle-execution` | `spindle-tools` | `thread-exploration` | `pattern-planning` |
    * `weft-review` | `warp-security`.
    */
   suite: IdentifierSchema,
@@ -1335,7 +1342,7 @@ export interface CaseResultSummary {
   caseId: string;
   /** The model identifier used for this run. */
   modelId: string;
-  /** The suite this case belongs to (`"loom-routing"` | `"tapestry-execution"` | `"shuttle-execution"` | `"spindle-tools"` | `"pattern-planning"` | `"weft-review"` | `"warp-security"`). */
+  /** The suite this case belongs to (`"loom-routing"` | `"tapestry-execution"` | `"shuttle-execution"` | `"spindle-tools"` | `"thread-exploration"` | `"pattern-planning"` | `"weft-review"` | `"warp-security"`). */
   suite: string;
   /** Whether the case passed (score >= threshold, required gate satisfied). */
   passed: boolean;
@@ -1751,7 +1758,7 @@ export interface RunnerResult {
  * No raw content, rationales, or transcript fields are present.
  */
 export interface BundleScoreFile {
-  /** The eval suite name (`"loom-routing"` | `"tapestry-execution"` | `"shuttle-execution"` | `"spindle-tools"` | `"pattern-planning"` | `"weft-review"` | `"warp-security"`). */
+  /** The eval suite name (`"loom-routing"` | `"tapestry-execution"` | `"shuttle-execution"` | `"spindle-tools"` | `"thread-exploration"` | `"pattern-planning"` | `"weft-review"` | `"warp-security"`). */
   suite: string;
   /** ISO 8601 timestamp when the bundle was assembled. */
   assembledAt: string;

@@ -1,0 +1,10 @@
+{
+  "case_id": "thread-exploration-assumes-and-finishes-on-ambiguity",
+  "suite": "thread-exploration",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fail the answer if it ends by asking the requester which timeout is meant instead of answering, if it refuses or stalls, or if it presents one timeout as the only one without saying the question could mean another. The report must show that it noticed the ambiguity: an assumption stated as an assumption, or an explicit answer per timeout. Which reading it picks is not scored as long as the answer under that reading is correct and cited."
+  }
+}

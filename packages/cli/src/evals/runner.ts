@@ -126,6 +126,10 @@ import {
   TAPESTRY_EXECUTION_SUITE,
   TapestryExecutionRunner,
 } from "./tapestry-execution-runner.js";
+import {
+  THREAD_EXPLORATION_SUITE,
+  ThreadExplorationRunner,
+} from "./thread-exploration-runner.js";
 import type {
   CaseResultSummary,
   ModelMatrixEntry,
@@ -453,7 +457,7 @@ export type RepeatabilityDiagnosticsResult =
  * Aggregate pass/fail rollup for a single eval suite (agent).
  */
 export interface AgentRollup {
-  /** The eval suite name (e.g. `"loom-routing"`, `"tapestry-execution"`, `"shuttle-execution"`, `"spindle-tools"`, `"pattern-planning"`, `"weft-review"`, `"warp-security"`). */
+  /** The eval suite name (e.g. `"loom-routing"`, `"tapestry-execution"`, `"shuttle-execution"`, `"spindle-tools"`, `"thread-exploration"`, `"pattern-planning"`, `"weft-review"`, `"warp-security"`). */
   suite: string;
   /** Total cases run in this suite. */
   totalCases: number;
@@ -1541,6 +1545,10 @@ export class EvalOrchestrator {
       return this.runSpindleSuite(request, modelFilter, services);
     }
 
+    if (suiteId === THREAD_EXPLORATION_SUITE) {
+      return this.runThreadSuite(request, modelFilter, services);
+    }
+
     if (suiteId === PATTERN_PLANNING_SUITE) {
       return this.runPatternSuite(request, modelFilter, services);
     }
@@ -1728,6 +1736,27 @@ export class EvalOrchestrator {
     services: UnitServices,
   ): ResultAsync<RunnerResult, RunnerError> {
     const runner = new SpindleToolsRunner({
+      modelClient: services.modelClient,
+      usageMeter: services.usageMeter,
+      scorer: services.scorer,
+      promptProvider: this.promptProviderFor(request),
+      evalsRoot: this.evalsRoot,
+    });
+
+    return runner.run({
+      caseFilter: request.case,
+      modelFilter,
+      dryRun: request.dryRun,
+      rawArtifacts: request.rawArtifacts,
+    });
+  }
+
+  private runThreadSuite(
+    request: EvalRunRequest,
+    modelFilter: string | undefined,
+    services: UnitServices,
+  ): ResultAsync<RunnerResult, RunnerError> {
+    const runner = new ThreadExplorationRunner({
       modelClient: services.modelClient,
       usageMeter: services.usageMeter,
       scorer: services.scorer,

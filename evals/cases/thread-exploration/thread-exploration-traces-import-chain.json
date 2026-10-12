@@ -1,0 +1,22 @@
+{
+  "id": "thread-exploration-traces-import-chain",
+  "description": "Exploration question: Where does the `logger` used in `src/handlers/webhook.ts` come from? Follow it back to its origin.\n\nFiles read (every line is numbered as `line | code`; this is everything that has been read):\n\n`src/handlers/webhook.ts`\n```\n1 | import { verifySignature } from \"../security/signature\";\n2 | import { logger } from \"../observability\";\n3 | \n4 | export async function handleWebhook(req: Req, res: Res) {\n5 |   if (!verifySignature(req)) {\n6 |     logger.warn({ ip: req.ip }, \"bad webhook signature\");\n7 |     return res.status(400).end();\n8 |   }\n9 |   logger.info({ id: req.body.id }, \"webhook accepted\");\n10 |   res.status(204).end();\n11 | }\n```\n\n`src/observability/index.ts`\n```\n1 | export * from \"./logger\";\n2 | export * from \"./metrics\";\n```\n\n`src/observability/metrics.ts`\n```\n1 | const counters = new Map<string, number>();\n2 | \n3 | export function countEvent(name: string): void {\n4 |   counters.set(name, (counters.get(name) ?? 0) + 1);\n5 | }\n```\n\n`src/observability/logger.ts`\n```\n1 | import { createLogger } from \"../lib/log-factory\";\n2 | import { config } from \"../config\";\n3 | \n4 | export const logger = createLogger({ name: \"app\", level: config.logLevel });\n```\n\n`src/lib/log-factory.ts`\n```\n1 | import pino from \"pino\";\n2 | \n3 | export interface LoggerOptions {\n4 |   name: string;\n5 |   level: string;\n6 | }\n7 | \n8 | export function createLogger(opts: LoggerOptions) {\n9 |   return pino({ name: opts.name, level: opts.level });\n10 | }\n```",
+  "suite": "thread-exploration",
+  "allowed_agents": [
+    "thread"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report that follows `logger` hop by hop with path and line: imported at `src/handlers/webhook.ts:2` from `../observability`, re-exported by `export *` at `src/observability/index.ts:1`, defined at `src/observability/logger.ts:4` by calling `createLogger`, which is defined at `src/lib/log-factory.ts:8` and wraps `pino` (imported at line 1), an external package. It stops at `pino` and says so, or marks anything beyond it as not read.",
+    "required_artifacts": [
+      "thread_locations_cited",
+      "thread_confidence_stated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "exploration",
+    "import-chain"
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "id": "thread-exploration-distinguishes-same-named-symbols",
+  "description": "Exploration question: Which `getUser` does each file in `src/billing/` call, and what does that one do?\n\nFiles read (every line is numbered as `line | code`; this is everything that has been read):\n\n`src/db/users.ts`\n```\n1 | import { db } from \"../db\";\n2 | \n3 | export async function getUser(id: string): Promise<User> {\n4 |   return db.one(\"SELECT * FROM users WHERE id = ?\", [id]);\n5 | }\n```\n\n`src/api/users.ts`\n```\n1 | import { userService } from \"./clients\";\n2 | \n3 | export async function getUser(id: string): Promise<UserProfile> {\n4 |   const res = await userService.get(`/users/${id}`);\n5 |   return res.json();\n6 | }\n```\n\n`src/billing/invoice.ts`\n```\n1 | import { getUser } from \"../db/users\";\n2 | \n3 | export async function buildInvoice(userId: string, cents: number) {\n4 |   const user = await getUser(userId);\n5 |   return { to: user.email, cents };\n6 | }\n```\n\n`src/billing/notify.ts`\n```\n1 | import { getUser } from \"../api/users\";\n2 | \n3 | export async function notifyOverdue(userId: string) {\n4 |   const profile = await getUser(userId);\n5 |   await sendEmail(profile.email, \"Your invoice is overdue\");\n6 | }\n```",
+  "suite": "thread-exploration",
+  "allowed_agents": [
+    "thread"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report that tells the two apart: `src/billing/invoice.ts` imports (line 1) and calls (line 4) `getUser` from `src/db/users.ts` (defined at line 3), a SQL lookup against the database; `src/billing/notify.ts` imports (line 1) and calls (line 4) `getUser` from `src/api/users.ts` (defined at line 3), an HTTP call to the user service.",
+    "required_artifacts": [
+      "thread_locations_cited",
+      "thread_confidence_stated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "exploration",
+    "name-collision"
+  ]
+}

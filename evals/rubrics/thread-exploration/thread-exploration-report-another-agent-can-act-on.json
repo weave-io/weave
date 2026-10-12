@@ -1,0 +1,10 @@
+{
+  "case_id": "thread-exploration-report-another-agent-can-act-on",
+  "suite": "thread-exploration",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fail the answer if it lists only `setRole`, or misses `acceptInvite` or `scripts/promote.ts`, if it includes `renameUser` as a role change, or if a location has no line number or a line that does not hold the code described. It must say that `acceptInvite` and the script bypass `setRole`, directly or by listing them as separate write sites."
+  }
+}

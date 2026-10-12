@@ -1,0 +1,23 @@
+{
+  "id": "thread-exploration-separates-found-from-inferred",
+  "description": "Exploration question: Does the cached user get refreshed when a user changes their email address? Say what you can show and what you are guessing.\n\nFiles read (every line is numbered as `line | code`; this is everything that has been read):\n\n`src/cache.ts`\n```\n1 | const store = new Map<string, { value: unknown; expires: number }>();\n2 | \n3 | export function get<T>(key: string): T | undefined {\n4 |   const hit = store.get(key);\n5 |   if (!hit || hit.expires < Date.now()) return undefined;\n6 |   return hit.value as T;\n7 | }\n8 | \n9 | export function set(key: string, value: unknown, ttlMs: number): void {\n10 |   store.set(key, { value, expires: Date.now() + ttlMs });\n11 | }\n12 | \n13 | export function del(key: string): void {\n14 |   store.delete(key);\n15 | }\n```\n\n`src/users/store.ts`\n```\n1 | import * as cache from \"../cache\";\n2 | import { db } from \"../db\";\n3 | \n4 | const USER_TTL_MS = 300_000;\n5 | \n6 | export async function getUser(id: string): Promise<User> {\n7 |   const cached = cache.get<User>(`user:${id}`);\n8 |   if (cached) return cached;\n9 |   const user = await db.one(\"SELECT * FROM users WHERE id = ?\", [id]);\n10 |   cache.set(`user:${id}`, user, USER_TTL_MS);\n11 |   return user;\n12 | }\n```\n\n`src/users/profile.ts`\n```\n1 | import { db } from \"../db\";\n2 | \n3 | export async function updateEmail(id: string, email: string): Promise<void> {\n4 |   await db.execute(\"UPDATE users SET email = ? WHERE id = ?\", [email, id]);\n5 | }\n```",
+  "suite": "thread-exploration",
+  "allowed_agents": [
+    "thread"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report that keeps what the code shows apart from what it infers, and states a confidence that reflects the files it read. Found: `getUser` caches the user for 300 seconds (`src/users/store.ts:4`, `:10`); `updateEmail` (`src/users/profile.ts:3`) updates the database and does not touch the cache; `cache.del` exists (`src/cache.ts:13`) and nothing in the three files calls it. Inferred, and marked as such: a reader may see the old email for up to the TTL after a change. It does not say the cache is never invalidated anywhere in the codebase, since only three files were read: any confidence it states about the codebase as a whole is below high. High confidence about what the three files themselves show is fine.",
+    "required_artifacts": [
+      "thread_locations_cited",
+      "thread_confidence_stated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "exploration",
+    "confidence",
+    "inference"
+  ]
+}

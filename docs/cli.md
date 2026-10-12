@@ -442,7 +442,7 @@ Weave configures harnesses; harnesses run themselves. `weave run`, if encountere
 
 `weave eval run` executes agent evaluation suites against the built-in model matrix. It is the primary eval entry point for CI and local verification.
 
-The current eval surface is a **shared eight-suite text-only registry**: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`. These suite IDs are the canonical fixture and reporting names, and their short `--agent` aliases are `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`. The same registry drives CLI filter validation, prompt snapshot coverage, and workflow sync tests. These suites score only text-visible structure from assistant output. They do not prove tool execution, harness side effects, or hidden environment state.
+The current eval surface is a **shared nine-suite text-only registry**: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `thread-exploration`, `pattern-planning`, `weft-review`, and `warp-security`. These suite IDs are the canonical fixture and reporting names, and their short `--agent` aliases are `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`. The same registry drives CLI filter validation, prompt snapshot coverage, and workflow sync tests. These suites score only text-visible structure from assistant output. They do not prove tool execution, harness side effects, or hidden environment state.
 
 Completed eval runs exit with code `0` even when one or more cases miss their pass threshold. Threshold misses are captured in `run-summary.json` and per-suite score files. The command exits non-zero for hard orchestration failures such as invalid input, missing secrets, model matrix/load failures, bundle write/publish failures, or suite-level partial failures that prevent complete results.
 
@@ -509,7 +509,7 @@ Dry-run is the one exception: `weave eval run --dry-run` does not build live mod
 
 All three filters use **strict exact-match**:
 
-- `--agent` must match either the suite name (`loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, `warp-security`) or the short agent name (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, `warp`). No other values are accepted.
+- `--agent` must match either the suite name (`loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `thread-exploration`, `pattern-planning`, `weft-review`, `warp-security`) or the short agent name (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, `warp`). No other values are accepted.
 - `--model` must exactly match a model `id` in `evals/model-matrix.json`. No substring matching. An unmatched value causes `EmptyModelSet` and lists allowed IDs.
 - `--case` must exactly match the `id` field in a case fixture file. No glob or prefix matching.
 
@@ -531,7 +531,7 @@ weave eval run --agent loom --model anthropic/claude-sonnet-4.5 --dry-run
 
 When enabled locally, raw artifacts are written to `eval-bundles/runs/<runId>/raw/`. Filename components are sanitized before write, and the resolved path must stay under `raw/`. Add this directory to `.gitignore`. Raw files must never be committed to any repository.
 
-Current text-only suites also reject runtime-only assertion shapes before execution. In practice, fixture authors must not use `expected_outcome.kind: "tool_call"`, `transcript_expectations.check: "tool_called"`, `transcript_expectations.check: "no_tool_called"`, or `content_contains` with `role: "tool"` anywhere on the current eight-suite surface.
+Current text-only suites also reject runtime-only assertion shapes before execution. In practice, fixture authors must not use `expected_outcome.kind: "tool_call"`, `transcript_expectations.check: "tool_called"`, `transcript_expectations.check: "no_tool_called"`, or `content_contains` with `role: "tool"` anywhere on the current nine-suite surface.
 
 ### Prompt provenance
 
@@ -568,6 +568,7 @@ packages/cli/src/evals/
 ├── tapestry-execution-runner.ts  TapestryExecutionRunner
 ├── shuttle-execution-runner.ts ShuttleExecutionRunner
 ├── spindle-tools-runner.ts     SpindleToolsRunner
+├── thread-exploration-runner.ts  ThreadExplorationRunner
 ├── pattern-planning-runner.ts  PatternPlanningRunner
 ├── weft-review-runner.ts       WeftReviewRunner
 ├── warp-security-runner.ts     WarpSecurityRunner
@@ -588,6 +589,7 @@ evals/
 │   ├── tapestry-execution/     Tapestry execution eval cases
 │   ├── shuttle-execution/      Shuttle delegated-task reporting eval cases
 │   ├── spindle-tools/          Spindle research-structure eval cases
+│   ├── thread-exploration/     Thread codebase-exploration eval cases
 │   ├── pattern-planning/       Pattern planning eval cases
 │   ├── weft-review/            Weft review eval cases
 │   └── warp-security/          Warp security eval cases
@@ -596,6 +598,7 @@ evals/
     ├── tapestry-execution/     Scoring rubrics for tapestry-execution cases
     ├── shuttle-execution/      Scoring rubrics for shuttle-execution cases
     ├── spindle-tools/          Scoring rubrics for spindle-tools cases
+    ├── thread-exploration/     Scoring rubrics for thread-exploration cases
     ├── pattern-planning/       Scoring rubrics for pattern-planning cases
     ├── weft-review/            Scoring rubrics for weft-review cases
     └── warp-security/          Scoring rubrics for warp-security cases

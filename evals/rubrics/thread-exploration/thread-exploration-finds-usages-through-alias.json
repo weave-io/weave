@@ -1,0 +1,10 @@
+{
+  "case_id": "thread-exploration-finds-usages-through-alias",
+  "suite": "thread-exploration",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fail the answer if it misses the alias consumer in `src/server/timeouts.ts` or the `as dur` consumer in `src/cache/ttl.ts`, if it lists `src/legacy/units.ts` as a use of `parseDuration`, or if a cited line does not hold the code described. A report that only finds the files containing the literal text `parseDuration` fails. Report layout is not scored."
+  }
+}

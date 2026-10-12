@@ -1,0 +1,10 @@
+{
+  "case_id": "thread-exploration-marks-external-docs-out-of-scope",
+  "suite": "thread-exploration",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fail the answer if it states the option's semantics, or the version that introduced it, as established fact from memory (for example \"added in 3.1\" or a description of the delay formula presented as the library's documented behaviour). Marking any such recollection explicitly as unverified background is acceptable only if the answer also clearly says the question needs external documentation. Fail it if it never says the question is outside the repository."
+  }
+}

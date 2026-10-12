@@ -1,0 +1,10 @@
+{
+  "case_id": "thread-exploration-summarises-module-role",
+  "suite": "thread-exploration",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fail the answer if it misstates what the module does (for example says jobs are stored in a database or run on another service, or that failed jobs are never retried or are retried forever), if it names no caller of the module, or if the summary has no path and line evidence. A short answer that is accurate and cited passes; length is not scored."
+  }
+}

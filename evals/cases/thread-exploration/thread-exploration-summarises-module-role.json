@@ -1,0 +1,22 @@
+{
+  "id": "thread-exploration-summarises-module-role",
+  "description": "Exploration question: What is the `src/scheduler` module for, and how does the rest of the app use it?\n\nFiles read (every line is numbered as `line | code`; this is everything that has been read):\n\n`src/scheduler/index.ts`\n```\n1 | export { schedule } from \"./queue\";\n2 | export { startWorker } from \"./worker\";\n```\n\n`src/scheduler/queue.ts`\n```\n1 | interface Job {\n2 |   name: string;\n3 |   payload: unknown;\n4 |   runAt: number;\n5 |   attempts: number;\n6 | }\n7 | \n8 | const jobs: Job[] = [];\n9 | \n10 | export function schedule(name: string, payload: unknown, opts: { delayMs?: number } = {}): void {\n11 |   jobs.push({ name, payload, runAt: Date.now() + (opts.delayMs ?? 0), attempts: 0 });\n12 | }\n13 | \n14 | export function takeDue(now: number): Job[] {\n15 |   const due = jobs.filter((j) => j.runAt <= now);\n16 |   for (const j of due) jobs.splice(jobs.indexOf(j), 1);\n17 |   return due;\n18 | }\n19 | \n20 | export function requeue(job: Job, delayMs: number): void {\n21 |   jobs.push({ ...job, runAt: Date.now() + delayMs, attempts: job.attempts + 1 });\n22 | }\n```\n\n`src/scheduler/worker.ts`\n```\n1 | import { requeue, takeDue } from \"./queue\";\n2 | import { handlers } from \"../jobs/registry\";\n3 | \n4 | const MAX_ATTEMPTS = 3;\n5 | \n6 | export function startWorker(): void {\n7 |   setInterval(async () => {\n8 |     for (const job of takeDue(Date.now())) {\n9 |       try {\n10 |         await handlers[job.name](job.payload);\n11 |       } catch {\n12 |         if (job.attempts + 1 < MAX_ATTEMPTS) requeue(job, 2 ** job.attempts * 1000);\n13 |       }\n14 |     }\n15 |   }, 1000);\n16 | }\n```\n\n`src/jobs/email.ts`\n```\n1 | import { schedule } from \"../scheduler\";\n2 | \n3 | export function sendWelcomeLater(userId: string): void {\n4 |   schedule(\"send-welcome\", { userId }, { delayMs: 60_000 });\n5 | }\n```\n\n`src/main.ts`\n```\n1 | import { startWorker } from \"./scheduler\";\n2 | import { startServer } from \"./server\";\n3 | \n4 | startWorker();\n5 | startServer();\n```",
+  "suite": "thread-exploration",
+  "allowed_agents": [
+    "thread"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report that explains the module's role correctly and cites it: it runs named jobs later, from an in-memory queue (`src/scheduler/queue.ts:8`; `schedule` at line 10), with a worker (`startWorker`, `src/scheduler/worker.ts:6`) that polls every second, runs due jobs through `handlers`, and retries a failed job up to three attempts with a growing delay (`MAX_ATTEMPTS`, line 4). It shows how the app uses it: `src/main.ts:4` starts the worker, and `src/jobs/email.ts:4` schedules a welcome job after 60 seconds. Saying the queue is memory-only, so scheduled jobs would not survive a restart, is a fair inference when marked as one.",
+    "required_artifacts": [
+      "thread_locations_cited",
+      "thread_confidence_stated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "exploration",
+    "summary"
+  ]
+}

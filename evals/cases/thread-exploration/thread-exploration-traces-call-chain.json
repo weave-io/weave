@@ -1,0 +1,22 @@
+{
+  "id": "thread-exploration-traces-call-chain",
+  "description": "Exploration question: Trace what happens, in order, when a client sends `POST /orders`, from the route to the database write.\n\nFiles read (every line is numbered as `line | code`; this is everything that has been read):\n\n`src/routes/orders.ts`\n```\n1 | import { Router } from \"../http/router\";\n2 | import { createOrder } from \"../services/orders\";\n3 | import { requireAuth } from \"../http/auth\";\n4 | \n5 | export const orders = Router();\n6 | \n7 | orders.post(\"/orders\", requireAuth, async (req, res) => {\n8 |   const order = await createOrder(req.user.id, req.body.items);\n9 |   res.status(201).json(order);\n10 | });\n```\n\n`src/http/auth.ts`\n```\n1 | export function requireAuth(req: Req, res: Res, next: Next) {\n2 |   const token = req.headers.authorization;\n3 |   if (!token) return res.status(401).end();\n4 |   req.user = verifyToken(token);\n5 |   next();\n6 | }\n```\n\n`src/services/orders.ts`\n```\n1 | import { insertOrder } from \"../repo/orders\";\n2 | import { priceItems } from \"./pricing\";\n3 | \n4 | export async function createOrder(userId: string, items: Item[]) {\n5 |   const priced = priceItems(items);\n6 |   if (priced.total <= 0) throw new Error(\"empty order\");\n7 |   return insertOrder({ userId, ...priced });\n8 | }\n```\n\n`src/services/pricing.ts`\n```\n1 | export function priceItems(items: Item[]) {\n2 |   const total = items.reduce((sum, i) => sum + i.unitCents * i.qty, 0);\n3 |   return { items, total };\n4 | }\n```\n\n`src/repo/orders.ts`\n```\n1 | import { db } from \"../db\";\n2 | \n3 | export async function insertOrder(row: NewOrder) {\n4 |   const result = await db.execute(\n5 |     \"INSERT INTO orders (user_id, total) VALUES (?, ?)\",\n6 |     [row.userId, row.total],\n7 |   );\n8 |   return { id: result.insertId, ...row };\n9 | }\n```\n\n`src/db.ts`\n```\n1 | import { connect } from \"./lib/mysql\";\n2 | \n3 | export const db = connect(process.env.DATABASE_URL);\n```",
+  "suite": "thread-exploration",
+  "allowed_agents": [
+    "thread"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report that walks the whole chain in order, each hop with its path and line: the route handler (`src/routes/orders.ts:7`, after `requireAuth` at `src/http/auth.ts:1`), `createOrder` (`src/services/orders.ts:4`), `priceItems` (`src/services/pricing.ts:1`), `insertOrder` (`src/repo/orders.ts:3`) and the `db.execute` INSERT (`src/repo/orders.ts:4`), with `db` created in `src/db.ts:3`. The order of hops must be right, and it must not skip the service layer.",
+    "required_artifacts": [
+      "thread_locations_cited",
+      "thread_confidence_stated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "exploration",
+    "call-chain"
+  ]
+}
