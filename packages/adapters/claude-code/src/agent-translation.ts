@@ -18,6 +18,7 @@ const MODEL_ALIAS_MAP: Record<string, string> = {
   "claude-opus-5-5": "opus",
   "claude-sonnet-5-5": "sonnet",
   "claude-sonnet-5": "sonnet",
+  "claude-haiku-5-5": "haiku",
   "claude-haiku-4-5": "haiku",
   "claude-haiku-4-5-20251001": "haiku",
   "claude-sonnet-4-5": "sonnet",
