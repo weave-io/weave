@@ -62,7 +62,7 @@ import {
 } from "../support/evals.js";
 
 // ---------------------------------------------------------------------------
-// The eight suites, and one well-formed and one poor answer for each
+// The nine suites, and one well-formed and one poor answer for each
 // ---------------------------------------------------------------------------
 
 interface SuiteProbe {
@@ -227,6 +227,33 @@ const PROBES: SuiteProbe[] = [
     poorAnswer: "Bun is generally fine with node modules, I think.",
   },
   {
+    suite: "thread-exploration",
+    agent: "thread",
+    fixture: {
+      id: "thread-find-retry-delay",
+      suite: "thread-exploration",
+      description:
+        "Exploration question: Where is `retryDelay` defined? `src/net/retry.ts`\n```\n9 | export function retryDelay(attempt: number): number {\n```",
+      allowedAgents: ["thread"],
+      expectedOutcome: {
+        kind: "task_completion",
+        description:
+          "Cite the definition with its line and state a confidence.",
+        required_artifacts: [
+          "thread_locations_cited",
+          "thread_confidence_stated",
+        ],
+      },
+      tags: ["exploration", "judgment"],
+    },
+    goodAnswer: [
+      "`retryDelay` is defined at `src/net/retry.ts:9`; it takes the attempt number and returns a delay.",
+      "",
+      "Confidence: high. Found: the definition on that line. Inferred: nothing beyond it.",
+    ].join("\n"),
+    poorAnswer: "It is in the net folder somewhere, I think.",
+  },
+  {
     suite: "pattern-planning",
     agent: "pattern",
     fixture: {
@@ -344,8 +371,8 @@ const except = (...suites: string[]): Array<[string, SuiteProbe]> =>
   EVERY_SUITE.filter(([name]) => !suites.includes(name));
 
 /**
- * The seven suites where a judge failure errors a good answer through the
- * shared runner error path. The eighth, `tapestry-category-routing`, errors it
+ * The eight suites where a judge failure errors a good answer through the
+ * shared runner error path. The ninth, `tapestry-category-routing`, errors it
  * through its own path, which also keeps a wrong route a scored failure; it
  * has its own scenarios below.
  */
@@ -2705,6 +2732,138 @@ describe("Spindle answers a brief whose research behaviour the judge checks", ()
   });
 
   it("fails a report with every section when the judge finds the wrong answer in it", async () => {
+    const passed = await runWith(true);
+    const failed = await runWith(false);
+
+    expect(passed.firstCase?.passed).toBe(true);
+    expect(failed.firstCase?.passed).toBe(false);
+  });
+});
+
+// --- Thread ----------------------------------------------------------------
+
+const THREAD_ANSWERS: SignalRow[] = [
+  [
+    "a located answer with a found-versus-inferred confidence statement",
+    [
+      "`retryDelay` is defined at `src/net/retry.ts:9` and called at `src/net/client.ts:11`.",
+      "",
+      "Found: both locations are in the files I read. Inferred: none.",
+      "Confidence: high.",
+    ].join("\n"),
+    ["thread_locations_cited", "thread_confidence_stated"],
+    true,
+  ],
+  [
+    "paths with no line numbers",
+    "`retryDelay` is in `src/net/retry.ts` and used by `src/net/client.ts`. Confidence: high, found in both.",
+    ["thread_locations_cited"],
+    false,
+  ],
+  [
+    "locations with no confidence statement",
+    "`retryDelay` is defined at `src/net/retry.ts:9`.",
+    ["thread_confidence_stated"],
+    false,
+  ],
+  [
+    "a confidence word that does not say what was found or inferred",
+    "`src/net/retry.ts:9` defines it. My confidence is high.",
+    ["thread_confidence_stated"],
+    false,
+  ],
+];
+
+describe("Thread answers a codebase question", () => {
+  const probe = only("thread-exploration")[0]?.[1] as SuiteProbe;
+
+  it.each(
+    THREAD_ANSWERS,
+  )("reads %s for what it is", async (_shape, text, signals, passes) => {
+    const run = await produces(probe, signals, text);
+
+    expect(run.firstCase?.passed).toBe(passes);
+  });
+
+  it("hands Thread the files as its only evidence and says it has no tools", async () => {
+    const run = await withEvalFixtures([probe.fixture], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "thread-exploration",
+        answers: [probe.goodAnswer],
+        rawArtifacts: true,
+      }),
+    );
+    const asked = run.rawArtifacts[0]?.transcript[0]?.content ?? "";
+
+    expect(asked).toContain("text-only exploration report");
+    expect(asked).toContain("You have no tools in this run");
+    expect(asked).toContain("Where is `retryDelay` defined?");
+  });
+});
+
+const THREAD_REPORT_SIGNALS = [
+  "thread_locations_cited",
+  "thread_confidence_stated",
+];
+
+describe("Thread answers a question whose exploration behaviour the judge checks", () => {
+  const probe = only("thread-exploration")[0]?.[1] as SuiteProbe;
+  const fixture: FixtureSpec = {
+    ...probe.fixture,
+    id: "thread-says-not-found",
+    description:
+      "Exploration question: Where is rate limiting implemented for `/export`? `src/server.ts`\n```\n5 | app.use(requestId);\n```",
+    expectedOutcome: {
+      kind: "task_completion",
+      description:
+        "A report that says the code it read has no rate limiting and names none.",
+      required_artifacts: THREAD_REPORT_SIGNALS,
+    },
+    tags: ["exploration", "not-found"],
+  };
+  // Located and confident, and it invents a limiter.
+  const answer = [
+    "Rate limiting for `/export` is the `rateLimit` middleware at `src/server.ts:5`.",
+    "",
+    "Found: the middleware chain. Confidence: high.",
+  ].join("\n");
+
+  async function runWith(judgePasses: boolean) {
+    return withEvalFixtures([fixture], (evalsRoot) =>
+      runEvalSuite({
+        evalsRoot,
+        agent: "thread-exploration",
+        answers: [answer],
+        rawArtifacts: true,
+        judgeOutput: {
+          score: judgePasses ? 0.97 : 0.02,
+          rationale: "judge rationale",
+        },
+      }),
+    );
+  }
+
+  it("shows the model the question and the files, but not the behaviour it is judged on", async () => {
+    const run = await runWith(true);
+    const asked = run.rawArtifacts[0]?.transcript[0]?.content ?? "";
+
+    expect(asked).toContain("Where is rate limiting implemented");
+    expect(asked).not.toContain("names none");
+  });
+
+  it("puts the expected behaviour in the rubric beside the two report questions", async () => {
+    const run = await runWith(true);
+    const call = run.judgeCalls.find(
+      (c) => c.dimension === "executionCompleteness",
+    );
+
+    expect(call?.response).toBe(answer);
+    expect(call?.rubricDescription).toContain("has no rate limiting");
+    expect(call?.criteria.map((c) => c.key)).toEqual(THREAD_REPORT_SIGNALS);
+  });
+
+  it("fails a located, confident report when the judge finds an invented limiter in it", async () => {
     const passed = await runWith(true);
     const failed = await runWith(false);
 

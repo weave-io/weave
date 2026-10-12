@@ -1,0 +1,23 @@
+{
+  "id": "thread-exploration-finds-usages-through-alias",
+  "description": "Exploration question: Find every place `parseDuration` is used.\n\nFiles read (every line is numbered as `line | code`; this is everything that has been read):\n\n`src/time/parse.ts`\n```\n1 | export function parseDuration(input: string): number {\n2 |   const m = /^(\\d+)(ms|s|m)$/.exec(input);\n3 |   if (!m) throw new Error(`bad duration: ${input}`);\n4 |   const n = Number(m[1]);\n5 |   return m[2] === \"ms\" ? n : m[2] === \"s\" ? n * 1000 : n * 60000;\n6 | }\n```\n\n`src/time/index.ts`\n```\n1 | export { parseDuration as toMillis } from \"./parse\";\n2 | export { sleep } from \"./sleep\";\n```\n\n`src/server/timeouts.ts`\n```\n1 | import { toMillis } from \"../time\";\n2 | \n3 | export const requestTimeoutMs = toMillis(process.env.REQUEST_TIMEOUT ?? \"30s\");\n4 | export const idleTimeoutMs = toMillis(process.env.IDLE_TIMEOUT ?? \"2m\");\n```\n\n`src/cli/flags.ts`\n```\n1 | import { parseDuration } from \"../time/parse\";\n2 | \n3 | export function readWaitFlag(argv: string[]): number {\n4 |   const raw = argv.find((a) => a.startsWith(\"--wait=\"))?.slice(7) ?? \"0ms\";\n5 |   return parseDuration(raw);\n6 | }\n```\n\n`src/cache/ttl.ts`\n```\n1 | import { parseDuration as dur } from \"../time/parse\";\n2 | \n3 | export const DEFAULT_TTL_MS = dur(\"5m\");\n```\n\n`src/legacy/units.ts`\n```\n1 | // Hours to milliseconds, used by the old billing report only.\n2 | export function toMillis(hours: number): number {\n3 |   return hours * 3_600_000;\n4 | }\n```",
+  "suite": "thread-exploration",
+  "allowed_agents": [
+    "thread"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report that finds all three consumers of `parseDuration`, including the two that do not call it by that name: `src/server/timeouts.ts` (through the barrel alias `toMillis`, the re-export at `src/time/index.ts:1`, calls at lines 3 and 4), `src/cli/flags.ts:5` (direct import) and `src/cache/ttl.ts:3` (imported `as dur`). It cites the definition at `src/time/parse.ts:1`. The `toMillis` in `src/legacy/units.ts` is an unrelated function; leaving it out, or naming it as unrelated, is correct.",
+    "required_artifacts": [
+      "thread_locations_cited",
+      "thread_confidence_stated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "exploration",
+    "usages",
+    "alias"
+  ]
+}

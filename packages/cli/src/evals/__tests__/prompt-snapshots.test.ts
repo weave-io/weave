@@ -54,6 +54,10 @@ const PATTERN_PROMPT_ACCEPTANCE_CONTRACT =
 const SHUTTLE_PROMPT_TASK_INTAKE_CONTRACT = "1. `Task intake`";
 const SHUTTLE_PROMPT_HONESTY_CONTRACT =
   "Do not claim hidden proof of file mutation, tool-call telemetry, browser activity, network activity, or runtime events you did not directly observe.";
+const THREAD_PROMPT_LOCATIONS_CONTRACT =
+  "Exact file paths and line numbers for every referenced symbol.";
+const THREAD_PROMPT_AMBIGUITY_CONTRACT =
+  "Resolve ambiguity yourself: investigate the most reasonable reading, state it as an assumption in your report, and finish.";
 const SPINDLE_PROMPT_FACTS_CONTRACT =
   "A `Source facts` section containing only claims grounded in cited sources.";
 const SPINDLE_PROMPT_HONESTY_CONTRACT =
@@ -536,6 +540,25 @@ describe("composeAgentSnapshots — integration with builtin config", () => {
     expect(artifact?.agentName).toBe("spindle");
     expect(artifact?.composedPrompt).toContain(SPINDLE_PROMPT_FACTS_CONTRACT);
     expect(artifact?.composedPrompt).toContain(SPINDLE_PROMPT_HONESTY_CONTRACT);
+  });
+
+  it("thread snapshot composes the shipped prompt with its read-only policy rendered", async () => {
+    const result = await composeAgentSnapshots({
+      agentNames: ["thread"],
+      rawArtifacts: true,
+    });
+    expect(result.isOk()).toBe(true);
+
+    const artifact = result._unsafeUnwrap().rawArtifacts[0];
+    expect(artifact?.agentName).toBe("thread");
+    expect(artifact?.composedPrompt).toContain(
+      THREAD_PROMPT_LOCATIONS_CONTRACT,
+    );
+    expect(artifact?.composedPrompt).toContain(
+      THREAD_PROMPT_AMBIGUITY_CONTRACT,
+    );
+    expect(artifact?.composedPrompt).toContain("write: deny. execute: deny.");
+    expect(artifact?.composedPrompt).not.toContain("{{");
   });
 
   it("running twice produces identical hashes (deterministic)", async () => {

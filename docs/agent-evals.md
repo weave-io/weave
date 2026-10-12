@@ -60,7 +60,7 @@ All publishable output passes through the central allowlist sanitizer in `packag
 
 ## Fixture Layout
 
-The fixture tree is intentionally flat and registry-shaped. The shared eval suite registry defines the current eight-suite text-only surface, and each registered suite gets exactly one case directory and one rubric directory. Contributors should treat those suite IDs as the canonical names used by CLI filters, workflow inputs, prompt snapshot coverage, sync tests, and publishable reporting.
+The fixture tree is intentionally flat and registry-shaped. The shared eval suite registry defines the current nine-suite text-only surface, and each registered suite gets exactly one case directory and one rubric directory. Contributors should treat those suite IDs as the canonical names used by CLI filters, workflow inputs, prompt snapshot coverage, sync tests, and publishable reporting.
 
 ```
 evals/
@@ -75,6 +75,8 @@ evals/
 │   ├── shuttle-execution/         Shuttle delegated-task reporting eval cases
 │   │   └── <case-id>.json
 │   ├── spindle-tools/             Spindle research-structure eval cases
+│   │   └── <case-id>.json
+│   ├── thread-exploration/        Thread codebase-exploration eval cases
 │   │   └── <case-id>.json
 │   ├── pattern-planning/          Pattern planning structure eval cases
 │   │   └── <case-id>.json
@@ -92,6 +94,8 @@ evals/
     ├── shuttle-execution/
     │   └── <case-id>.json
     ├── spindle-tools/
+    │   └── <case-id>.json
+    ├── thread-exploration/
     │   └── <case-id>.json
     ├── pattern-planning/
     │   └── <case-id>.json
@@ -125,6 +129,7 @@ packages/cli/src/evals/
 ├── tapestry-category-routing-runner.ts  TapestryCategoryRoutingRunner
 ├── shuttle-execution-runner.ts   ShuttleExecutionRunner
 ├── spindle-tools-runner.ts       SpindleToolsRunner
+├── thread-exploration-runner.ts  ThreadExplorationRunner
 ├── pattern-planning-runner.ts    PatternPlanningRunner
 ├── weft-review-runner.ts         WeftReviewRunner
 ├── warp-security-runner.ts       WarpSecurityRunner
@@ -381,7 +386,7 @@ strict rule. A case filter naming a case of the other track fails with
 
 A text attempt takes about 18 seconds, almost all of it waiting on OpenRouter
 for the model's answer and the judge's. One after another, the full default
-matrix — 98 text cases on 14 default models, 1,372 attempts per repeat — takes
+matrix — 111 text cases on 14 default models, 1,554 attempts per repeat — takes
 about 7 hours, past GitHub's 6-hour job limit, so a CI run of it would be
 killed and publish nothing. `--concurrency N` keeps up to N units of work in
 flight at once (Spec 39, gap G7):
@@ -401,7 +406,7 @@ bun packages/cli/src/main.ts eval run --track text --concurrency 6
   `EvalOrchestrator.executeSuites()` already had. Units run through a
   `WorkerPool` (`worker-pool.ts`); inside a unit, its cases run one after
   another as before. A unit holds at most 16 text cases, so the tail is short: the
-  1,372 attempts are 112 units per repeat.
+  1,554 attempts are 126 units per repeat.
 - **What a run records does not depend on N.** Units start in the order a
   sequential run runs them, and their results are folded back in that order,
   never in the order they finished. Score files, the run report, the public
@@ -432,9 +437,9 @@ bun packages/cli/src/main.ts eval run --track text --concurrency 6
 
 | Run | Attempts | N = 1 | N = 6 (CI default) | N = 12 | N = 16 |
 | --- | --- | --- | --- | --- | --- |
-| Full default matrix, text track, once | 1,372 | ~6 h 50 min | ~70 min | ~35 min | ~26 min |
-| The same, `repeat=3` | 4,116 | ~20 h 30 min | ~3 h 25 min | ~1 h 45 min | ~1 h 20 min |
-| The same, `repeat=5` (the publication bar's minimum) | 6,860 | ~34 h | ~5 h 45 min — over the step limit | ~2 h 50 min | ~2 h 10 min |
+| Full default matrix, text track, once | 1,554 | ~7 h 45 min | ~78 min | ~39 min | ~29 min |
+| The same, `repeat=3` | 4,662 | ~23 h 20 min | ~3 h 55 min | ~1 h 55 min | ~1 h 25 min |
+| The same, `repeat=5` (the publication bar's minimum) | 7,770 | ~39 h | ~6 h 30 min — over the step limit | ~3 h 15 min | ~2 h 25 min |
 | `--models dev`, text track, `repeat=3` | 588 | ~2 h 55 min | ~30 min | ~15 min | ~12 min |
 
 These are estimates from the 24 Sep run's per-attempt time; more calls in
@@ -890,7 +895,7 @@ needs a new `PublicReportBundle` schema version under Spec 31.
 
 ## Eval Suites
 
-Weave currently supports an **eight-suite text-only eval surface**. Every registered suite is synthetic and text-observable by design.
+Weave currently supports a **nine-suite text-only eval surface**. Every registered suite is synthetic and text-observable by design.
 
 | Suite | Runner | What it tests |
 |---|---|---|
@@ -899,6 +904,7 @@ Weave currently supports an **eight-suite text-only eval surface**. Every regist
 | `tapestry-category-routing` | `TapestryCategoryRoutingRunner` | Tapestry emits text-observable category routing signals when delegating to category shuttles |
 | `shuttle-execution` | `ShuttleExecutionRunner` | Shuttle emits bounded delegated-task completion reports with task intake reflection, file awareness, acceptance confirmation, and final evidence reporting from assistant text; its `own-envelope` cases test what it does with a described session: honest reporting of failures, stale checks and a symptom that remains, scope, no invented values or commands, refusing secrets, and following the task's learnings |
 | `spindle-tools` | `SpindleToolsRunner` | Spindle emits source-cited research structure with explicit `Source facts`, `Interpretation`, `Sources`, and bounded confidence from assistant text |
+| `thread-exploration` | `ThreadExplorationRunner` | Thread answers a codebase question from synthetic numbered files with `path:line` evidence and a found-versus-inferred confidence statement; its cases check one exploration behaviour each (call chains, aliased usages, not-found, read-only, out of scope, ambiguity) |
 | `pattern-planning` | `PatternPlanningRunner` | Pattern emits structurally explicit plans with observable scope, file-task, sequencing, and acceptance signals; its `judge-scored` cases check one planning behaviour each (reuse, codegen order, scope, a safe migration, a separate upgrade task, a kept constraint, a flagged decision) |
 | `weft-review` | `WeftReviewRunner` | Weft emits structurally explicit review verdicts, blocker counts, and actionable file-cited approval or rejection signals; its judged review cases check that a rejection names the right defect and that a clean change is approved without invented blockers |
 | `warp-security` | `WarpSecurityRunner` | Warp emits structurally explicit security triage, capped blocker counts, and evidence-backed findings from assistant text; its `judge-scored` cases check that a BLOCK names the real flaw, and its `judgment` approvals that it does not block a change that only looks dangerous |
@@ -1386,7 +1392,7 @@ When contributors run `weave eval run --agent loom --case <case-id> --raw-artifa
 
 This keeps the ambiguous case stable. It no longer swings on under-specified wording alone, and it distinguishes optional exploration from the implementation route that Loom is supposed to choose.
 
-The eight current families are: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, and `warp-security`.
+The nine current families are: `loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `thread-exploration`, `pattern-planning`, `weft-review`, and `warp-security`.
 
 ### 2026-06-30 provisional baseline for phase-1 fairness work
 
@@ -1697,7 +1703,7 @@ In short, the final rubric lands on the eval-cleanup side, not the prompt-work s
 
 Weave supports two eval tracks, not one. Both are documented in [ADR 0008](adr/0008-harness-trajectory-evals.md) (Accepted, 2026-09-03) and formalized in [Spec 33](specs/33-spec-harness-trajectory-evals/33-spec-harness-trajectory-evals.md).
 
-**Track 1: text-only.** Described throughout this document. One chat completion per case, scored by regex/structural extraction over assistant text. This remains the primary surface: eight suites, all cases, all published history described above.
+**Track 1: text-only.** Described throughout this document. One chat completion per case, scored by regex/structural extraction over assistant text. This remains the primary surface: nine suites, all cases, all published history described above.
 
 **Track 2: harness trajectory.** A parallel track that observes a real harness session end to end, not just its final text. Trajectory cases use `expected_outcome.kind: "harness_trajectory"` and are gated to trajectory-capable suites by the same shared suite registry that gates `tool_call` outcomes. The engine defines a normalized `TrajectoryEvent` union; the adapter produces that event stream via either Channel A (runtime log parsing, e.g. OpenCode's `--print-logs --log-level DEBUG` output) or Channel B (a harness-native plugin subscribing to typed hooks). Weave-core knows only the normalized event stream, never which channel an adapter chose, preserving the engine/adapter boundary in `docs/adapter-boundary.md`.
 
@@ -1708,7 +1714,7 @@ Trajectory sessions run in a Podman sandbox: an ephemeral per-case workspace, a 
 - `observedToolCalls: number` (count only, no arguments)
 - `harnessCompletedWithoutError: boolean`
 
-As of this writing, Phase 1 has shipped: Channel A only, one case (`loom-route-shuttle-implement-utility-trajectory`), one model (`openai/gpt-4o-mini`), one sandbox (`opencode-default`). The published bundle schema is at version 2, and `SuiteSummaryEntry.hasRuntimeVerifiedCases` plus a per-case `trajectorySummary` are present in the published bundle for suites that carry trajectory cases. This is a measured first step, not a broad claim: one case on one model proves the mechanism works end to end, not that trajectory suites are as mature or as broadly covered as the eight text-only suites. Read a green trajectory case as "the harness really did what the event stream shows," not as a substitute for the text-only suites' breadth. The actual dashboard renderer that visualizes this data lives in a downstream consumer repo, out of scope for this repository.
+As of this writing, Phase 1 has shipped: Channel A only, one case (`loom-route-shuttle-implement-utility-trajectory`), one model (`openai/gpt-4o-mini`), one sandbox (`opencode-default`). The published bundle schema is at version 2, and `SuiteSummaryEntry.hasRuntimeVerifiedCases` plus a per-case `trajectorySummary` are present in the published bundle for suites that carry trajectory cases. This is a measured first step, not a broad claim: one case on one model proves the mechanism works end to end, not that trajectory suites are as mature or as broadly covered as the nine text-only suites. Read a green trajectory case as "the harness really did what the event stream shows," not as a substitute for the text-only suites' breadth. The actual dashboard renderer that visualizes this data lives in a downstream consumer repo, out of scope for this repository.
 
 Sandbox hardening beyond Podman defaults and cross-harness trajectory comparison remain explicit non-goals of the current trajectory work; see ADR 0008's "Deferred" section for the full list. Checking the produced code was one of those non-goals until [ADR 0012](adr/0012-verification-aware-trajectory-evals.md) lifted it for cases that ship a verifier (below).
 
@@ -1766,6 +1772,18 @@ Ten `spindle-tools` cases were added on 1 Oct 2026 (Spec 39 task 0.3, gap G3 in 
 
 Each expected outcome names the one behaviour that is required and says what is optional, the lesson from the Weft and Shuttle cases. A judge sanity check scored one bad answer per case, with every report section present but the wrong behaviour; Jev failed all ten (execution 0.01 to 0.06). Real answers with their section headings, source list and confidence line stripped also failed. See "Spindle-tools fixture guidance" in [`evals/README.md`](../evals/README.md#spindle-tools-fixture-guidance).
 
+#### Thread exploration cases
+
+The `thread-exploration` suite was added on 12 Oct 2026 (Spec 39 task 0.9, gap G10 in the [eval readiness record](artifacts/eval-readiness-model-recommendations.md)), with 13 text cases. Before it, no suite scored Thread's own output: `loom-routing` only checks that Loom sends work to Thread, so Thread's Haiku 4.5 default was unmeasured and a change to it had no evidence.
+
+A text run gives the model no tools, so each case supplies what Thread would have read: a few files of a small invented project, shown as a backticked path and a fenced block with every line numbered `line | code`, and one question. The runner tells the model that these files are everything it has read and that the line numbers are exact; it adds nothing about the report's shape, because the shape is the shipped Thread prompt's (the `builtin` config mode composes it, see [Choose the config prompts are composed from](#choose-the-config-prompts-are-composed-from---config)). It also names no structural signals, which models otherwise copy into their headings.
+
+- **Every case asks for the same report fundamentals**, the two signals the runner extracts from the answer: `thread_locations_cited` (a `path:line` location, not a bare path) and `thread_confidence_stated` (a confidence statement alongside found/inferred wording). `says-not-found` requires only the confidence, since it reports nothing to locate.
+- **Each case tests one exploration behaviour**, written in its expected outcome and rubric notes, which the runner never shows the model, and judged: exact locations for every symbol (`exact-paths-and-lines`), a complete call chain (`traces-call-chain`), usages through a re-export alias, an aliased import and a name-alike decoy (`finds-usages-through-alias`), an import chain followed through a barrel to its origin (`traces-import-chain`), saying a symbol is not in the code and inventing no limiter (`says-not-found`), found kept apart from inferred (`separates-found-from-inferred`), no edit when asked to fix (`does-not-edit-when-asked-to-fix`), external library documentation marked out of scope (`marks-external-docs-out-of-scope`), an ambiguous question finished without asking (`assumes-and-finishes-on-ambiguity`), two same-named functions told apart through their imports (`distinguishes-same-named-symbols`), a report an implementer can act on, including the write site that bypasses the obvious function (`report-another-agent-can-act-on`), a module summary with callers (`summarises-module-role`), and no guessing about a file that was listed but not read (`does-not-speculate-on-unread-code`).
+- **The session audit adds no exploration failure mode.** [Its findings](artifacts/session-audit-2026-09.md) about exploration concern Loom delegating to harness built-in agents instead of Thread, which `loom-routing` covers; the cases here come from Thread's own prompt (`packages/config/prompts/thread.md`).
+
+A live sanity run on 12 Oct 2026 (one repeat, text track, `builtin` config) gave Claude Haiku 4.5 11 of 13 and GPT 6 Luna 13 of 13; earlier drafts of the corpus scored Haiku 4.5 at 9 and 11 of 13. The cases Haiku 4.5 missed were real misses (a report that gave no confidence statement, an inference presented as a finding), not case defects; a case both models failed was rewritten because it was not ambiguous enough to test the behaviour. This is a sanity check, not the five-repeat comparison the Spec 39 publication bar needs. See "Thread-exploration fixture guidance" in [`evals/README.md`](../evals/README.md#thread-exploration-fixture-guidance).
+
 #### Shuttle own-envelope cases
 
 `shuttle-execution` cases tagged `own-envelope` (Spec 39 task 0.3, gap G3 in the [eval readiness record](artifacts/eval-readiness-model-recommendations.md)) carry the whole delegated task and the session so far (edits, commands and observed output) in their description. The runner sends it as written, with no section script and no signal names, and the judge scores the report against the case's expected outcome and rubric notes. They are judged rather than deterministic because the runner's honesty signals assume nothing ran: a report that quotes `14 pass, 1 fail` from the session is honest there. Nine were added on 1 Oct 2026, taking the suite from 3 to 12 text cases. Some come in act / don't-act pairs like judgment cases: `reports-preexisting-failure` (leave a failure the change did not cause) against `owns-failure-it-caused`. See "Own-envelope cases" in [`evals/README.md`](../evals/README.md#own-envelope-cases-own-envelope-tag).
@@ -1811,7 +1829,7 @@ Fail-closed consequences:
 - `tool_called`, `no_tool_called`, and `content_contains` with `role: "tool"` are rejected for current text-only suites
 - workflow-dispatch agent allowlists and CLI agent filters are expected to mirror the same registry
 
-Forbidden assertion shapes in the current eight-suite surface are therefore:
+Forbidden assertion shapes in the current nine-suite surface are therefore:
 
 - `expected_outcome.kind: "tool_call"`
 - `transcript_expectations.check: "tool_called"`
@@ -1822,7 +1840,7 @@ Forbidden assertion shapes in the current eight-suite surface are therefore:
 
 When adding a new case, start from the text the runner can actually score:
 
-1. pick one of the eight registered suites
+1. pick one of the nine registered suites
 2. encode the whole scenario in the case description and suite prompt shape, with no hidden repo or runtime dependency
 3. choose only suite-allowed `expected_outcome.kind` values
 4. use `transcript_expectations` only for text-visible checks on `user` or `assistant` roles
@@ -2203,7 +2221,7 @@ CLI flags and env vars are merged: if both are set for the same filter key with 
 
 All three filters use **strict exact-match** semantics:
 
-- `--agent` must exactly match either the suite name (`loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, `warp-security`) or the short agent name (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, `warp`).
+- `--agent` must exactly match either the suite name (`loom-routing`, `tapestry-execution`, `tapestry-category-routing`, `shuttle-execution`, `spindle-tools`, `thread-exploration`, `pattern-planning`, `weft-review`, `warp-security`) or the short agent name (`loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, `warp`).
 - `--model` must exactly match a model `id` in `evals/model-matrix.json`. No substring matching. If the value does not match any matrix entry, the run aborts with `EmptyModelSet` and lists the allowed IDs.
 - `--case` must exactly match the `id` field in a case fixture file. No glob or prefix matching.
 
@@ -2622,7 +2640,7 @@ Do not increase retention without a specific operational reason.
 
 ## Adding a New Eval Case
 
-1. Choose the suite: `loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `pattern-planning`, `weft-review`, or `warp-security`.
+1. Choose the suite: `loom-routing`, `tapestry-execution`, `shuttle-execution`, `spindle-tools`, `thread-exploration`, `pattern-planning`, `weft-review`, or `warp-security`.
 2. Create `evals/cases/<suite>/<case-id>.json` following the case schema in `evals/README.md`.
 3. Create the matching `evals/rubrics/<suite>/<case-id>.json` rubric file.
 4. Ensure `id` in the case file exactly matches `case_id` in the rubric and the JSON filename (without `.json`).

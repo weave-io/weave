@@ -84,10 +84,10 @@ describe("runEval — no subcommand", () => {
     await runEval(ctx);
     const err = terminal.err.join("\n");
     expect(err).toContain(
-      "Short agents: loom, tapestry, shuttle, spindle, pattern, weft, warp",
+      "Short agents: loom, tapestry, shuttle, spindle, thread, pattern, weft, warp",
     );
     expect(err).toContain(
-      "Suites: loom-routing, tapestry-execution, shuttle-execution, spindle-tools, pattern-planning, weft-review, warp-security",
+      "Suites: loom-routing, tapestry-execution, shuttle-execution, spindle-tools, thread-exploration, pattern-planning, weft-review, warp-security",
     );
   });
 });

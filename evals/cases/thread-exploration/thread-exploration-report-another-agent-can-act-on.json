@@ -1,0 +1,23 @@
+{
+  "id": "thread-exploration-report-another-agent-can-act-on",
+  "description": "Exploration question: Another agent will add an audit-log entry everywhere a user's role changes. Report what it has to touch, so it does not need to re-read these files.\n\nFiles read (every line is numbered as `line | code`; this is everything that has been read):\n\n`src/admin/roles.ts`\n```\n1 | import { db } from \"../db\";\n2 | \n3 | export async function setRole(userId: string, role: Role): Promise<void> {\n4 |   await db.update(\"users\", { role }, { id: userId });\n5 | }\n```\n\n`src/invite/accept.ts`\n```\n1 | import { db } from \"../db\";\n2 | \n3 | export async function acceptInvite(token: string, userId: string): Promise<void> {\n4 |   const invite = await db.one(\"SELECT * FROM invites WHERE token = ?\", [token]);\n5 |   await db.update(\"users\", { role: invite.role }, { id: userId });\n6 |   await db.update(\"invites\", { usedAt: new Date() }, { token });\n7 | }\n```\n\n`src/users/profile.ts`\n```\n1 | import { db } from \"../db\";\n2 | \n3 | export async function renameUser(id: string, name: string): Promise<void> {\n4 |   await db.update(\"users\", { name }, { id });\n5 | }\n```\n\n`scripts/promote.ts`\n```\n1 | import { db } from \"../src/db\";\n2 | \n3 | const email = process.argv[2];\n4 | await db.update(\"users\", { role: \"admin\" }, { email });\n5 | console.log(`promoted ${email}`);\n```",
+  "suite": "thread-exploration",
+  "allowed_agents": [
+    "thread"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report an implementer can act on: all three places that change a role, each with its path, line and a short description of what it does: `setRole` (`src/admin/roles.ts:4`), `acceptInvite` (`src/invite/accept.ts:5`, which sets the role directly and does not go through `setRole`) and the promote script (`scripts/promote.ts:4`). `renameUser` in `src/users/profile.ts` changes only the name, so it is left out or named as not a role change.",
+    "required_artifacts": [
+      "thread_locations_cited",
+      "thread_confidence_stated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "exploration",
+    "structured-report",
+    "completeness"
+  ]
+}

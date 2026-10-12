@@ -1,0 +1,10 @@
+{
+  "case_id": "thread-exploration-separates-found-from-inferred",
+  "suite": "thread-exploration",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fail the answer if it states as fact that the cache is never invalidated anywhere, or that it is refreshed, if it presents the stale-for-up-to-300-seconds consequence as observed rather than inferred, if it states high confidence in the claim about the codebase as a whole (as opposed to what the three files show), or if it has no separation between what the code shows and what it infers. A short Found / Inferred layout, or equivalent wording inside prose, both count as separation."
+  }
+}

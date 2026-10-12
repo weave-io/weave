@@ -498,8 +498,8 @@ describe("EvalOrchestrator — model matrix", () => {
 // ---------------------------------------------------------------------------
 
 describe("EvalOrchestrator — suite fan-out", () => {
-  it("shared suite registry still enumerates the eight-suite text-only surface", () => {
-    expect(EVAL_SUITE_REGISTRY).toHaveLength(8);
+  it("shared suite registry still enumerates the nine-suite text-only surface", () => {
+    expect(EVAL_SUITE_REGISTRY).toHaveLength(9);
     expect(EVAL_SUITE_REGISTRY.map((suite) => suite.shortAgentFilter)).toEqual(
       EVAL_SHORT_AGENT_FILTERS,
     );
@@ -1215,8 +1215,8 @@ describe("EvalOrchestrator — multi-model fan-out", () => {
     );
     expect(result.isOk()).toBe(true);
     if (result.isOk()) {
-      // 1 model × 8 suites = 8 partial failures
-      expect(result.value.partialFailures.length).toBe(8);
+      // 1 model × 9 suites = 9 partial failures
+      expect(result.value.partialFailures.length).toBe(9);
     }
   });
 

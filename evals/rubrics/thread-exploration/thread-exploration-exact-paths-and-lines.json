@@ -1,0 +1,10 @@
+{
+  "case_id": "thread-exploration-exact-paths-and-lines",
+  "suite": "thread-exploration",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fail the answer if it reports a symbol with a file path but no line number, if a cited line number does not hold the code the answer says is there (the excerpt numbers every line; off by one counts as wrong), if it omits a call site (client.ts, sync.ts or the test file), or if it names a file or caller that is not in the excerpt. `shouldRetry` is not a call of `retryDelay`. Report layout, headings and ordering are not scored."
+  }
+}

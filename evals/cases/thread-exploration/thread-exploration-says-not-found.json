@@ -1,0 +1,22 @@
+{
+  "id": "thread-exploration-says-not-found",
+  "description": "Exploration question: Where is rate limiting implemented for the `/export` endpoint?\n\nFiles read (every line is numbered as `line | code`; this is everything that has been read):\n\n`src/routes/export.ts`\n```\n1 | import { Router } from \"../http/router\";\n2 | import { listRows } from \"../repo/rows\";\n3 | import { toCsv } from \"../lib/csv\";\n4 | \n5 | export const exportRoutes = Router();\n6 | \n7 | exportRoutes.get(\"/export\", async (req, res) => {\n8 |   const limit = Math.min(Number(req.query.limit ?? 1000), 5000);\n9 |   const rows = await listRows({ limit, cursor: req.query.cursor });\n10 |   res.type(\"text/csv\").send(toCsv(rows));\n11 | });\n```\n\n`src/http/middleware.ts`\n```\n1 | export function requestId(req: Req, _res: Res, next: Next) {\n2 |   req.id = req.headers[\"x-request-id\"] ?? crypto.randomUUID();\n3 |   next();\n4 | }\n5 | \n6 | export function cors(origins: string[]) {\n7 |   return (req: Req, res: Res, next: Next) => {\n8 |     if (origins.includes(req.headers.origin)) {\n9 |       res.setHeader(\"access-control-allow-origin\", req.headers.origin);\n10 |     }\n11 |     next();\n12 |   };\n13 | }\n```\n\n`src/server.ts`\n```\n1 | import { cors, requestId } from \"./http/middleware\";\n2 | import { exportRoutes } from \"./routes/export\";\n3 | \n4 | const app = createApp();\n5 | app.use(requestId);\n6 | app.use(cors([\"https://app.example.com\"]));\n7 | app.use(exportRoutes);\n8 | app.listen(3000);\n```\n\n`package.json`\n```\n1 | {\n2 |   \"name\": \"exporter\",\n3 |   \"dependencies\": {\n4 |     \"csv-stringify\": \"^6.5.0\",\n5 |     \"mysql2\": \"^3.11.0\"\n6 |   }\n7 | }\n```",
+  "suite": "thread-exploration",
+  "allowed_agents": [
+    "thread"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report that says the code it read contains no rate limiting for `/export`: the middleware chain in `src/server.ts` (lines 5-7) has only `requestId` and `cors`, `src/http/middleware.ts` defines no limiter, and `package.json` lists no limiter package. It does not name a rate-limiting file, function, middleware or package. Pointing out that the `limit` query parameter at `src/routes/export.ts:8` caps the page size and is not rate limiting is optional.",
+    "required_artifacts": [
+      "thread_confidence_stated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "exploration",
+    "not-found",
+    "no-invention"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "id": "thread-exploration-assumes-and-finishes-on-ambiguity",
+  "description": "Exploration question: Where is the timeout set?\n\nFiles read (every line is numbered as `line | code`; this is everything that has been read):\n\n`src/http/client.ts`\n```\n1 | const REQUEST_TIMEOUT_MS = 8000;\n2 | \n3 | export function get(url: string) {\n4 |   return fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });\n5 | }\n```\n\n`src/jobs/worker.ts`\n```\n1 | const JOB_TIMEOUT_MS = 60_000;\n2 | \n3 | export async function runJob(job: Job) {\n4 |   return Promise.race([job.run(), rejectAfter(JOB_TIMEOUT_MS)]);\n5 | }\n```\n\n`src/db.ts`\n```\n1 | import { connect } from \"./lib/mysql\";\n2 | \n3 | export const db = connect({\n4 |   url: process.env.DATABASE_URL,\n5 |   connectTimeoutMs: 3000,\n6 | });\n```",
+  "suite": "thread-exploration",
+  "allowed_agents": [
+    "thread"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report that notices the question does not say which timeout is meant and finishes anyway, without waiting for a reply: it states which reading it took (or says plainly that it is answering for each timeout in the code) and answers with evidence. The three timeouts are the HTTP request timeout (`src/http/client.ts:1`, 8 seconds, applied at line 4), the job timeout (`src/jobs/worker.ts:1`, 60 seconds, applied at line 4) and the database connect timeout (`src/db.ts:5`, 3 seconds). Answering for one reading with the others briefly noted, or for all three, are both fine.",
+    "required_artifacts": [
+      "thread_locations_cited",
+      "thread_confidence_stated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "exploration",
+    "ambiguity",
+    "no-clarifying-question"
+  ]
+}

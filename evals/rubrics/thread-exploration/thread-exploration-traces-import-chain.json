@@ -1,0 +1,10 @@
+{
+  "case_id": "thread-exploration-traces-import-chain",
+  "suite": "thread-exploration",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fail the answer if it stops at the barrel file (`src/observability/index.ts`) without reaching the definition, if it names `metrics.ts` as the source, if it describes how `pino` works inside as if it had read it, or if a cited line does not hold the code described. Report layout is not scored."
+  }
+}

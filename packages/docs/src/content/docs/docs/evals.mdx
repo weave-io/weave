@@ -14,18 +14,19 @@ This surface is intentionally narrow today. It is for **text-only prompt evals**
 
 ## Supported Suite Families
 
-The current public surface supports eight suite families:
+The current public surface supports nine suite families:
 
 - `loom-routing`
 - `tapestry-execution`
 - `tapestry-category-routing`
 - `shuttle-execution`
 - `spindle-tools`
+- `thread-exploration`
 - `pattern-planning`
 - `weft-review`
 - `warp-security`
 
-These are the canonical suite IDs used by filters, fixtures, and reports. The `--agent` flag also accepts the short aliases `loom`, `tapestry`, `shuttle`, `spindle`, `pattern`, `weft`, and `warp`. `tapestry` matches both `tapestry-execution` and `tapestry-category-routing`.
+These are the canonical suite IDs used by filters, fixtures, and reports. The `--agent` flag also accepts the short aliases `loom`, `tapestry`, `shuttle`, `spindle`, `thread`, `pattern`, `weft`, and `warp`. `tapestry` matches both `tapestry-execution` and `tapestry-category-routing`.
 
 Loom's eligible delegation targets are not a hardcoded list in the eval fixtures. They are derived by composing the `loom` agent through the engine's `composeAgentDescriptor()` API and reading its resolved `delegationTargets`, so a config change that adds or removes a target is reflected automatically. See `docs/agent-evals.md` for the composition-derived coverage preflight.
 

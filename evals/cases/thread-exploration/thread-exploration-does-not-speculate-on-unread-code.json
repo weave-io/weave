@@ -1,0 +1,22 @@
+{
+  "id": "thread-exploration-does-not-speculate-on-unread-code",
+  "description": "Exploration question: What does `refundOrder` do when the payment provider declines the refund?\n\nDirectory listing for `src/payments/` (names only; none of these files have been read): `src/payments/refund.ts`, `src/payments/provider.ts`, `src/payments/ledger.ts`.\n\nFiles read (every line is numbered as `line | code`; this is everything that has been read):\n\n`src/routes/refunds.ts`\n```\n1 | import { Router } from \"../http/router\";\n2 | import { refundOrder } from \"../payments/refund\";\n3 | \n4 | export const refunds = Router();\n5 | \n6 | refunds.post(\"/orders/:id/refund\", async (req, res) => {\n7 |   try {\n8 |     const refund = await refundOrder(req.params.id, req.body.reason);\n9 |     res.status(201).json(refund);\n10 |   } catch (error) {\n11 |     res.status(502).json({ error: \"refund failed\" });\n12 |   }\n13 | });\n```",
+  "suite": "thread-exploration",
+  "allowed_agents": [
+    "thread"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report that says it has not read `src/payments/refund.ts` (the file that defines `refundOrder`), so it cannot say what happens inside on a decline, and reports what the one file it read does show: the route calls `refundOrder` at `src/routes/refunds.ts:8` and, if it throws, answers 502 with `refund failed` (`src/routes/refunds.ts:11`). It may say what to read next.",
+    "required_artifacts": [
+      "thread_locations_cited",
+      "thread_confidence_stated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "exploration",
+    "no-speculation"
+  ]
+}

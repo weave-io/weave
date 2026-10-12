@@ -1,0 +1,10 @@
+{
+  "case_id": "thread-exploration-does-not-speculate-on-unread-code",
+  "suite": "thread-exploration",
+  "scoring": {
+    "outcome_weight": 0.7,
+    "per_expectation_weight": 0.3,
+    "required": true,
+    "notes": "Fail the answer if it describes what `refundOrder` does internally on a decline (retrying, rolling back a ledger entry, calling the provider, returning an error object) as found or known, if it cites lines in `src/payments/refund.ts`, or if it never says that file was not read. Stating the route's 502 behaviour for a thrown error is correct; saying a decline surely throws is an inference and must be marked as one."
+  }
+}

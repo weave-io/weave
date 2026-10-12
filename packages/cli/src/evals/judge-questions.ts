@@ -83,6 +83,10 @@ export const SIGNAL_QUESTIONS: Readonly<Record<string, string>> = {
     "Does the answer present source facts first, separately from its own interpretation?",
   spindle_confidence_reported: "Does the answer state its confidence?",
   spindle_sources_list_present: "Does the answer include a list of sources?",
+  thread_locations_cited:
+    "Does the report give the file path and line number of every symbol it refers to?",
+  thread_confidence_stated:
+    "Does the report state its confidence, saying what it found in the code and what it only inferred?",
   shuttle_task_intake_structured:
     "Does the report restate the task it was given in a structured way?",
   shuttle_files_acknowledged:

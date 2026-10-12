@@ -1,0 +1,23 @@
+{
+  "id": "thread-exploration-exact-paths-and-lines",
+  "description": "Exploration question: Where is `retryDelay` defined, and what calls it? Give every location.\n\nFiles read (every line is numbered as `line | code`; this is everything that has been read):\n\n`src/net/retry.ts`\n```\n1 | import { clamp } from \"../util/math\";\n2 | \n3 | export interface RetryOptions {\n4 |   baseMs: number;\n5 |   maxMs: number;\n6 | }\n7 | \n8 | export function retryDelay(attempt: number, opts: RetryOptions): number {\n9 |   const raw = opts.baseMs * 2 ** attempt;\n10 |   return clamp(raw, 0, opts.maxMs);\n11 | }\n12 | \n13 | export function shouldRetry(status: number): boolean {\n14 |   return status === 429 || status >= 500;\n15 | }\n```\n\n`src/net/client.ts`\n```\n1 | import { retryDelay, shouldRetry } from \"./retry\";\n2 | import { sleep } from \"../util/time\";\n3 | \n4 | const DEFAULTS = { baseMs: 200, maxMs: 5000 };\n5 | \n6 | export async function request(url: string, attempts = 3): Promise<Response> {\n7 |   let last: Response | undefined;\n8 |   for (let attempt = 0; attempt < attempts; attempt++) {\n9 |     last = await fetch(url);\n10 |     if (!shouldRetry(last.status)) return last;\n11 |     await sleep(retryDelay(attempt, DEFAULTS));\n12 |   }\n13 |   return last as Response;\n14 | }\n```\n\n`src/jobs/sync.ts`\n```\n1 | import { retryDelay } from \"../net/retry\";\n2 | import { pullChanges } from \"./pull\";\n3 | \n4 | export async function runSync(): Promise<void> {\n5 |   for (let attempt = 0; attempt < 5; attempt++) {\n6 |     const ok = await pullChanges();\n7 |     if (ok) return;\n8 |     const wait = retryDelay(attempt, { baseMs: 1000, maxMs: 30000 });\n9 |     console.warn(`sync failed, retrying in ${wait}ms`);\n10 |     await Bun.sleep(wait);\n11 |   }\n12 | }\n```\n\n`src/net/__tests__/retry.test.ts`\n```\n1 | import { expect, it } from \"bun:test\";\n2 | import { retryDelay } from \"../retry\";\n3 | \n4 | it(\"doubles the delay each attempt\", () => {\n5 |   expect(retryDelay(2, { baseMs: 100, maxMs: 10_000 })).toBe(400);\n6 | });\n7 | \n8 | it(\"never exceeds maxMs\", () => {\n9 |   expect(retryDelay(10, { baseMs: 100, maxMs: 1000 })).toBe(1000);\n10 | });\n```",
+  "suite": "thread-exploration",
+  "allowed_agents": [
+    "thread"
+  ],
+  "expected_outcome": {
+    "kind": "task_completion",
+    "description": "A report that gives the definition of `retryDelay` at `src/net/retry.ts:8` and every call site with its file path and line: `src/net/client.ts:11`, `src/jobs/sync.ts:8` and the two calls in `src/net/__tests__/retry.test.ts` (lines 5 and 9). Citing the import line of a file in addition to its call line is fine if the line number is correct. Optional: a one-line description of each location.",
+    "required_artifacts": [
+      "thread_locations_cited",
+      "thread_confidence_stated"
+    ]
+  },
+  "accepted_alternates": [],
+  "transcript_expectations": [],
+  "tags": [
+    "exploration",
+    "locations",
+    "usages"
+  ]
+}
