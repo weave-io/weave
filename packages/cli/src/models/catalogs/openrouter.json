@@ -1,7 +1,7 @@
 {
   "id": "openrouter",
   "description": "OpenRouter: model IDs carry the vendor, as in evals/model-matrix.json, so an entry names them as openrouter/<vendor>/<model>.",
-  "updated": "2026-10-01",
+  "updated": "2026-10-12",
   "models": [
     {
       "providerID": "openrouter",
@@ -14,6 +14,10 @@
     {
       "providerID": "openrouter",
       "id": "anthropic/claude-sonnet-5"
+    },
+    {
+      "providerID": "openrouter",
+      "id": "anthropic/claude-haiku-5.5"
     },
     {
       "providerID": "openrouter",

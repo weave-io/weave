@@ -1,7 +1,7 @@
 {
   "id": "anthropic",
   "description": "Anthropic (and models.dev's anthropic provider): Claude versions spelled with a dash (docs/model-resolution.md).",
-  "updated": "2026-10-01",
+  "updated": "2026-10-12",
   "models": [
     {
       "providerID": "anthropic",
@@ -14,6 +14,10 @@
     {
       "providerID": "anthropic",
       "id": "claude-sonnet-5"
+    },
+    {
+      "providerID": "anthropic",
+      "id": "claude-haiku-5-5"
     },
     {
       "providerID": "anthropic",

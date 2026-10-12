@@ -92,6 +92,21 @@ describe("Claude Code tier entries (Spec 39)", () => {
     }
   });
 
+  it("knows Claude Haiku 5.5 and writes it as the haiku tier", () => {
+    expect(CLAUDE_CODE_AVAILABLE_MODELS.has("claude-haiku-5-5")).toBe(true);
+    const input = buildClaudeCodeModelInput(
+      makeDescriptor({ models: ["claude-haiku-5-5"] }),
+    );
+    const { model } = resolveAdapterModelIntent(input);
+    expect(model).toBe("claude-haiku-5-5");
+    const markdown = translateAgentToMarkdown({
+      descriptor: makeDescriptor({ models: ["claude-haiku-5-5"] }),
+      resolvedModel: model ?? "",
+      allowedTools: [],
+    });
+    expect(markdown).toContain("\nmodel: haiku\n");
+  });
+
   it("skips a user's unknown entry and lands on the tier", () => {
     const input = buildClaudeCodeModelInput(
       makeDescriptor({ models: ["not-a-claude-model", "haiku"] }),

@@ -108,6 +108,14 @@
       "prices": { "input_per_million": 2, "output_per_million": 10, "as_of": "2026-10-01" }
     },
     {
+      "id": "anthropic/claude-haiku-5.5",
+      "display_name": "Claude Haiku 5.5",
+      "provider": "anthropic",
+      "default": true,
+      "tags": ["fast", "cheap"],
+      "prices": { "input_per_million": 0.1, "output_per_million": 0.5, "as_of": "2026-10-12" }
+    },
+    {
       "id": "anthropic/claude-haiku-4.5",
       "display_name": "Claude Haiku 4.5",
       "provider": "anthropic",
