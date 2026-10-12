@@ -59,7 +59,7 @@ const THREAD_PROMPT_LOCATIONS_CONTRACT =
 const THREAD_PROMPT_AMBIGUITY_CONTRACT =
   "Resolve ambiguity yourself: investigate the most reasonable reading, state it as an assumption in your report, and finish.";
 const SPINDLE_PROMPT_FACTS_CONTRACT =
-  "A `Source facts` section containing only claims grounded in cited sources.";
+  "A `Source facts` section containing the cited, source-grounded claims that answer the question asked.";
 const SPINDLE_PROMPT_HONESTY_CONTRACT =
   "If network access is actually available in your runtime, use it to fetch documentation pages, specifications, and changelogs directly when needed.";
 

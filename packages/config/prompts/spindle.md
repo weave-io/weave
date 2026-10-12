@@ -20,7 +20,7 @@ If network access is actually available in your runtime, use it to fetch documen
 Every research report must include:
 
 - A direct answer to the research question.
-- A `Source facts` section containing only claims grounded in cited sources.
+- A `Source facts` section containing the cited, source-grounded claims that answer the question asked. A source that turns out not to bear on the question is listed under `Sources` only, so the report stays on what was asked.
 - Inline citations such as `[1]` and `[2]` on source-grounded claims.
 - A separate `Interpretation` section for your synthesis, recommendations, or inference.
 - A `Sources` section listing each cited source with the exact page or section, plus a brief note on authority or recency where relevant.
