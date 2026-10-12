@@ -279,23 +279,29 @@ describe("BUILTIN_MODELS_ISSUED", () => {
         .sort(([a], [b]) => a.localeCompare(b)),
     );
     expect({ issued: BUILTIN_MODELS_ISSUED, models }).toEqual({
-      issued: "2026-09-29T09:11:44Z",
+      issued: "2026-10-12T20:27:48Z",
       models: {
         loom: ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"],
         pattern: ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"],
         shuttle: ["claude-sonnet-5.5", "claude-sonnet-5-5", "gpt-6-sol"],
-        spindle: ["gpt-6-luna", "claude-haiku-4.5", "claude-haiku-4-5"],
+        spindle: ["claude-sonnet-5.5", "claude-sonnet-5-5", "gpt-6-luna"],
         tapestry: ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"],
-        thread: ["claude-haiku-4.5", "claude-haiku-4-5", "gpt-6-luna"],
-        warp: ["gpt-6-sol", "claude-opus-5.5", "claude-opus-5-5"],
-        weft: ["gpt-6-sol", "claude-opus-5.5", "claude-opus-5-5"],
+        thread: [
+          "claude-haiku-5.5",
+          "claude-haiku-5-5",
+          "claude-haiku-4.5",
+          "claude-haiku-4-5",
+          "gpt-6-luna",
+        ],
+        warp: ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"],
+        weft: ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"],
       },
     });
   });
 
   it("is an ISO 8601 UTC timestamp", () => {
     expect(new Date(BUILTIN_MODELS_ISSUED).toISOString()).toBe(
-      "2026-09-29T09:11:44.000Z",
+      "2026-10-12T20:27:48.000Z",
     );
   });
 });

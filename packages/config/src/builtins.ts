@@ -30,7 +30,7 @@ import weftPrompt from "../prompts/weft.md" with { type: "text" };
 
 /**
  * When the builtin `models` lists in `BUILTIN_WEAVE_SOURCE` were last set:
- * the commit time of #270, in UTC.
+ * the time of the change for #314, in UTC.
  *
  * A published model recommendations list issued before this is rejected, so
  * an old list can never override newer builtins, even on a first opt-in or
@@ -38,7 +38,7 @@ import weftPrompt from "../prompts/weft.md" with { type: "text" };
  * builtin `models` list changes; `builtins.test.ts` pins the lists to this
  * value and fails until you do.
  */
-export const BUILTIN_MODELS_ISSUED = "2026-09-29T09:11:44Z";
+export const BUILTIN_MODELS_ISSUED = "2026-10-12T20:27:48Z";
 
 /**
  * Embedded builtin prompt contents, keyed by agent name.
@@ -176,7 +176,7 @@ agent pattern {
 agent thread {
   description "Codebase explorer: traces symbols, call graphs, and data flow with exact file and line evidence; read-only, cannot execute or delegate; select for internal investigation before planning or editing"
   prompt_file "thread.md"
-  models ["claude-haiku-4.5", "claude-haiku-4-5", "gpt-6-luna"]
+  models ["claude-haiku-5.5", "claude-haiku-5-5", "claude-haiku-4.5", "claude-haiku-4-5", "gpt-6-luna"]
   mode subagent
 
   tool_policy {
@@ -197,7 +197,7 @@ agent thread {
 agent spindle {
   description "External researcher: checks official documentation, specifications, and library APIs with citations; network access but no writes, execution, or delegation; select when a decision needs facts outside this repository"
   prompt_file "spindle.md"
-  models ["gpt-6-luna", "claude-haiku-4.5", "claude-haiku-4-5"]
+  models ["claude-sonnet-5.5", "claude-sonnet-5-5", "gpt-6-luna"]
   mode subagent
 
   tool_policy {
@@ -218,7 +218,7 @@ agent spindle {
 agent weft {
   description "Code reviewer: checks correctness, quality, and maintainability and returns an approve or request-changes verdict; read-only, cannot execute or delegate; select after non-trivial changes"
   prompt_file "weft.md"
-  models ["gpt-6-sol", "claude-opus-5.5", "claude-opus-5-5"]
+  models ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"]
   mode subagent
 
   tool_policy {
@@ -239,7 +239,7 @@ agent weft {
 agent warp {
   description "Security auditor: checks vulnerabilities, unsafe patterns, and specification compliance and returns an approve or block verdict; read-only, cannot execute or delegate; select when changes touch auth, crypto, tokens, secrets, sessions, CORS, CSP, or input validation"
   prompt_file "warp.md"
-  models ["gpt-6-sol", "claude-opus-5.5", "claude-opus-5-5"]
+  models ["claude-opus-5.5", "claude-opus-5-5", "gpt-6-sol"]
   mode subagent
 
   tool_policy {

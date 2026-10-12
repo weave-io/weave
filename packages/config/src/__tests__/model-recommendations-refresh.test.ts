@@ -44,6 +44,8 @@ const NEXT_PATHS = modelRecommendationsCachePaths("next", GLOBAL_DIR);
 const BASE_URL = "https://models.test/models";
 const STABLE_URL = `${BASE_URL}/stable.v1.json`;
 const START = Date.parse("2026-10-02T12:00:00Z");
+/** The builtin models baseline these fixtures were written against. */
+const BUILTINS_ISSUED = "2026-09-29T09:11:44Z";
 const HOUR = 60 * 60 * 1000;
 
 const AUTO: ModelUpdatesSettings = { mode: "auto" };
@@ -265,6 +267,7 @@ function harness(
     globalDir: GLOBAL_DIR,
     baseUrl: BASE_URL,
     publicKeys: [keys.publicKey],
+    builtinModelsIssued: BUILTINS_ISSUED,
     ...overrides,
   });
   return { clock, cache, fetcher, models };

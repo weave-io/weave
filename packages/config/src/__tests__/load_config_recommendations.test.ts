@@ -50,6 +50,8 @@ const PROJECT_PATH = `${PROJECT}/.weave/config.weave`;
 const STABLE_APPLIED = `${GLOBAL_DIR}/cache/model-recommendations/stable/applied.json`;
 const NEXT_APPLIED = `${GLOBAL_DIR}/cache/model-recommendations/next/applied.json`;
 const NOW = new Date("2026-10-02T12:00:00Z");
+/** The builtin models baseline these fixtures were written against. */
+const BUILTINS_ISSUED = "2026-09-29T09:11:44Z";
 
 const BUILTINS = getBuiltinConfig()._unsafeUnwrap();
 const BUILTIN_LOOM = BUILTINS.agents.loom?.models ?? [];
@@ -150,6 +152,7 @@ function options(overrides: LoadConfigOptions = {}): LoadConfigOptions {
     harness: "opencode2",
     now: () => NOW,
     publicKeys: [keys.publicKey],
+    builtinModelsIssued: BUILTINS_ISSUED,
     ...overrides,
   };
 }

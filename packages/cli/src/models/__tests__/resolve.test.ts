@@ -62,16 +62,16 @@ describe("catalog fixtures", () => {
 });
 
 describe("the builtin lists resolve as docs/model-resolution.md describes", () => {
-  it("on a Copilot host, every agent gets the model recorded in the 29 Sep live check", () => {
+  it("on a Copilot host, every agent gets its Claude entry in Copilot's spelling", () => {
     expect(resolveBuiltins("github-copilot")).toEqual({
       loom: "github-copilot/claude-opus-5.5",
       pattern: "github-copilot/claude-opus-5.5",
       shuttle: "github-copilot/claude-sonnet-5.5",
-      spindle: "github-copilot/gpt-6-luna",
+      spindle: "github-copilot/claude-sonnet-5.5",
       tapestry: "github-copilot/claude-opus-5.5",
-      thread: "github-copilot/claude-haiku-4.5",
-      warp: "github-copilot/gpt-6-sol",
-      weft: "github-copilot/gpt-6-sol",
+      thread: "github-copilot/claude-haiku-5.5",
+      warp: "github-copilot/claude-opus-5.5",
+      weft: "github-copilot/claude-opus-5.5",
     });
   });
 
@@ -80,9 +80,9 @@ describe("the builtin lists resolve as docs/model-resolution.md describes", () =
       loom: "anthropic/claude-opus-5-5",
       pattern: "anthropic/claude-opus-5-5",
       shuttle: "anthropic/claude-sonnet-5-5",
-      spindle: "anthropic/claude-haiku-4-5",
+      spindle: "anthropic/claude-sonnet-5-5",
       tapestry: "anthropic/claude-opus-5-5",
-      thread: "anthropic/claude-haiku-4-5",
+      thread: "anthropic/claude-haiku-5-5",
       warp: "anthropic/claude-opus-5-5",
       weft: "anthropic/claude-opus-5-5",
     });
@@ -106,18 +106,17 @@ describe("the builtin lists resolve as docs/model-resolution.md describes", () =
       expect(model).toBe("none");
   });
 
-  it("with Copilot and OpenAI, the OpenAI IDs are ambiguous and Weft, Warp and Spindle take their Claude fallback", () => {
-    const resolved = resolveBuiltins("github-copilot+openai");
-    expect(resolved.weft).toBe("github-copilot/claude-opus-5.5");
-    expect(resolved.warp).toBe("github-copilot/claude-opus-5.5");
-    expect(resolved.spindle).toBe("github-copilot/claude-haiku-4.5");
-    expect(resolved.loom).toBe("github-copilot/claude-opus-5.5");
-    const weft = resolver.resolveInCatalog(
+  it("with Copilot and OpenAI, every agent takes its Claude entry before the ambiguous OpenAI ID", () => {
+    expect(resolveBuiltins("github-copilot+openai")).toEqual(
+      resolveBuiltins("github-copilot"),
+    );
+    const sol = resolver.resolveInCatalog(
       "weft",
-      builtinModels("weft"),
+      ["gpt-6-sol"],
       PROVIDER_CATALOGS["github-copilot+openai"],
     );
-    expect(weft.skipped).toEqual([{ entry: "gpt-6-sol", reason: "ambiguous" }]);
+    expect(sol.model).toBe("none");
+    expect(sol.skipped).toEqual([{ entry: "gpt-6-sol", reason: "ambiguous" }]);
   });
 
   it("on Claude Code, the tier of the first Anthropic entry", () => {
@@ -133,7 +132,7 @@ describe("the builtin lists resolve as docs/model-resolution.md describes", () =
       loom: "opus",
       pattern: "opus",
       shuttle: "sonnet",
-      spindle: "haiku",
+      spindle: "sonnet",
       tapestry: "opus",
       thread: "haiku",
       warp: "opus",

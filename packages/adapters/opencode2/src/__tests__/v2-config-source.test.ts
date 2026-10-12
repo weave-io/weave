@@ -10,6 +10,7 @@
 
 import { beforeAll, describe, expect, it } from "bun:test";
 import {
+  BUILTIN_MODELS_ISSUED,
   modelRecommendationsCachePaths,
   signModelRecommendations,
 } from "@weaveio/weave-config";
@@ -257,10 +258,16 @@ describe("a promoted recommendations list (Spec 39, task 6.2)", () => {
     };
   });
 
-  /** A signed envelope issued `hoursAgo`, putting Loom on `model`. */
+  /**
+   * A signed envelope putting Loom on `model`, issued `hoursAgo` before a day
+   * after the builtin models baseline: a smaller `hoursAgo` is a newer list,
+   * and no list predates the builtins however recently they were set.
+   */
   async function envelope(hoursAgo: number, model: string) {
-    const issued = new Date(Date.now() - hoursAgo * 3_600_000);
-    const expires = new Date(issued.getTime() + 30 * 24 * 3_600_000);
+    const issued = new Date(
+      Date.parse(BUILTIN_MODELS_ISSUED) + (24 - hoursAgo) * 3_600_000,
+    );
+    const expires = new Date(Date.now() + 30 * 24 * 3_600_000);
     const stamp = (date: Date) => date.toISOString().replace(/\.\d{3}Z$/, "Z");
     const payload = JSON.stringify({
       schema: 1,
