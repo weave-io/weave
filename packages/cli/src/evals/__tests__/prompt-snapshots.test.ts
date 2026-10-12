@@ -55,7 +55,7 @@ const SHUTTLE_PROMPT_TASK_INTAKE_CONTRACT = "1. `Task intake`";
 const SHUTTLE_PROMPT_HONESTY_CONTRACT =
   "Do not claim hidden proof of file mutation, tool-call telemetry, browser activity, network activity, or runtime events you did not directly observe.";
 const SPINDLE_PROMPT_FACTS_CONTRACT =
-  "A `Source facts` section containing only claims grounded in cited sources.";
+  "A `Source facts` section containing the cited, source-grounded claims that answer the question asked.";
 const SPINDLE_PROMPT_HONESTY_CONTRACT =
   "If network access is actually available in your runtime, use it to fetch documentation pages, specifications, and changelogs directly when needed.";
 
