@@ -13,11 +13,12 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { errAsync, ok, type Result, ResultAsync } from "neverthrow";
+import { errAsync, ok, okAsync, type Result, ResultAsync } from "neverthrow";
 import type { OpenCode2CatalogCandidate } from "../v2/catalog.js";
 import {
   OpenCode2BackgroundRefresh,
   OpenCode2CatalogController,
+  type OpenCode2RefreshState,
 } from "../v2/config-refresh.js";
 import type { OpenCode2Error } from "../v2/errors.js";
 import { catalog } from "./v2-fixtures.js";
@@ -237,20 +238,30 @@ function deferred<T = void>() {
 }
 
 describe("OpenCode2BackgroundRefresh", () => {
+  const fresh = () => okAsync<OpenCode2RefreshState, OpenCode2Error>("fresh");
+  const failing = (code: OpenCode2Error["code"]) =>
+    errAsync<OpenCode2RefreshState, OpenCode2Error>({ code, message: code });
+
   it("waits for a slow probe to settle before scheduling the next", async () => {
     const firstStarted = deferred();
     const finishFirst = deferred();
     const secondStarted = deferred();
     let ticks = 0;
-    const background = new OpenCode2BackgroundRefresh(1, async () => {
-      ticks += 1;
-      if (ticks === 1) {
-        firstStarted.resolve();
-        await finishFirst.promise;
-        return;
-      }
-      secondStarted.resolve();
-    });
+    const background = new OpenCode2BackgroundRefresh(
+      1,
+      () => {
+        ticks += 1;
+        if (ticks === 1) {
+          firstStarted.resolve();
+          return ResultAsync.fromSafePromise(
+            finishFirst.promise.then((): OpenCode2RefreshState => "fresh"),
+          );
+        }
+        secondStarted.resolve();
+        return fresh();
+      },
+      () => undefined,
+    );
     background.start();
     await firstStarted.promise;
     // Many intervals pass while the first probe is still running.
@@ -258,42 +269,114 @@ describe("OpenCode2BackgroundRefresh", () => {
     const whileRunning = ticks;
     finishFirst.resolve();
     await secondStarted.promise;
-    background.stop();
+    await background.stop();
 
     expect(whileRunning).toBe(1);
     expect(ticks).toBe(2);
   });
 
-  it("keeps probing after a probe throws or rejects", async () => {
+  it("keeps probing after a probe throws or fails", async () => {
     const thirdStarted = deferred();
     let ticks = 0;
-    const background = new OpenCode2BackgroundRefresh(1, () => {
-      ticks += 1;
-      if (ticks === 1) throw new Error("probe threw");
-      if (ticks === 2) return Promise.reject(new Error("probe rejected"));
-      thirdStarted.resolve();
-      return Promise.resolve();
-    });
+    const warnings: string[] = [];
+    const background = new OpenCode2BackgroundRefresh(
+      1,
+      () => {
+        ticks += 1;
+        if (ticks === 1) throw new Error("probe threw");
+        if (ticks === 2) return failing("config_unavailable");
+        thirdStarted.resolve();
+        return fresh();
+      },
+      (failure) => warnings.push(failure.code),
+    );
     background.start();
     await thirdStarted.promise;
-    background.stop();
+    await background.stop();
 
     expect(ticks).toBe(3);
+    expect(warnings).toEqual(["host_unavailable", "config_unavailable"]);
   });
 
-  it("runs no probe once stopped", async () => {
-    const firstStarted = deferred();
+  it("warns once while the same failure repeats, and again after a success", async () => {
+    const outcomes = [
+      () => failing("config_unavailable"),
+      () => failing("config_unavailable"),
+      () => failing("config_unavailable"),
+      fresh,
+      () => failing("config_unavailable"),
+    ];
+    const done = deferred();
     let ticks = 0;
-    const background = new OpenCode2BackgroundRefresh(1, async () => {
-      ticks += 1;
-      firstStarted.resolve();
+    const warnings: string[] = [];
+    const background = new OpenCode2BackgroundRefresh(
+      1,
+      () => {
+        const outcome = outcomes[ticks] ?? fresh;
+        ticks += 1;
+        if (ticks === outcomes.length + 1) done.resolve();
+        return outcome();
+      },
+      (failure) => warnings.push(failure.code),
+    );
+    background.start();
+    await done.promise;
+    await background.stop();
+
+    expect(warnings).toEqual(["config_unavailable", "config_unavailable"]);
+  });
+
+  it("reports a failure the controller keeps behind its last valid catalog", async () => {
+    let probeFails = false;
+    const controller = new OpenCode2CatalogController(0, {
+      build: () => ResultAsync.fromSafePromise(Promise.resolve(catalog())),
+      changed: () =>
+        probeFails
+          ? errAsync({ code: "config_unavailable", message: "unreadable" })
+          : okAsync(false),
+      reload: async () => undefined,
     });
+    await controller.initialize();
+    probeFails = true;
+
+    // refreshIfDue keeps the catalog and reports Ok; only status() says why.
+    expect((await controller.refreshIfDue()).isOk()).toBe(true);
+    const background = await controller.refreshInBackground();
+    expect(background.isErr() && background.error.code).toBe(
+      "config_unavailable",
+    );
+    probeFails = false;
+    expect((await controller.refreshInBackground()).isOk()).toBe(true);
+  });
+
+  it("runs no probe once stopped, and waits for the one in flight", async () => {
+    const firstStarted = deferred();
+    const finishFirst = deferred();
+    let ticks = 0;
+    let settled = false;
+    const background = new OpenCode2BackgroundRefresh(
+      1,
+      () => {
+        ticks += 1;
+        firstStarted.resolve();
+        return ResultAsync.fromSafePromise(
+          finishFirst.promise.then((): OpenCode2RefreshState => {
+            settled = true;
+            return "fresh";
+          }),
+        );
+      },
+      () => undefined,
+    );
     background.start();
     await firstStarted.promise;
-    background.stop();
-    const stoppedAt = ticks;
+    const stopped = background.stop();
+    finishFirst.resolve();
+    await stopped;
+    const settledWhenStopped = settled;
     await Bun.sleep(20);
 
-    expect(ticks).toBe(stoppedAt);
+    expect(settledWhenStopped).toBe(true);
+    expect(ticks).toBe(1);
   });
 });
