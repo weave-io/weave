@@ -38,7 +38,7 @@ Attempts passed, out of cases × 5 repeats. The bracket is the 95% Wilson interv
 | Spindle | spindle-tools (12), before #318 | GPT 6 Luna 56/60 93% [84–97] | Sonnet 5.5 56/60 93% [84–97] | p = 1.000 | **failed** on `answers-the-question-asked`, 4/5 → 1/5 | $0.00025 → $0.0108 |
 | Spindle | spindle-tools (12), after #318 | GPT 6 Luna 60/60 100% [94–100] | **Sonnet 5.5 59/60** 98% [91–100] | p = 1.000 | passed | $0.00025 → $0.0107 |
 | Thread | thread-exploration (13) | Haiku 4.5 52/65 80% [69–88] | **Haiku 5.5 65/65** 100% [94–100] | **p < 0.001, significantly better** | passed | $0.0036 → $0.0008 |
-| Shuttle | shuttle-execution (12), re-score | — | Sonnet 5.5 55/60, then 5/5 on the fixed case | — | — | $0.0156 |
+| Shuttle | shuttle-execution (12), re-score | — | Sonnet 5.5 55/60 before #316; the fixed case 5/5 after it, so 60/60 by case | — | — | $0.0156 |
 
 Cases that did not pass 5/5:
 
@@ -69,4 +69,4 @@ Publication bar steps 5–8 are outside `compare-models`: the trajectory cases o
 
 ## Bundles
 
-The bundles are local and are not in the repository. They are in the slot directories `eval-bundles/slots/defaults-1012/` (`wf-*`, `wp-*`, `sp-*`, `sh-son55`, and `diag-*` for the `--raw-artifacts` re-runs) and `eval-bundles/slots/defaults-1012b/` (`th-*`, `sh-secret`) of the `fleet/havent-done-release-awhile-latest-models` worktree, and for Spindle after #318 in `eval-bundles/slots/spindle/{luna,son,hai}/` of the `spindle-prompt-on-question` worktree, on the maintainer's machine. Each slot has its `run.log`.
+The bundles are local and are not in the repository. Each unit ran in its own slot directory under `eval-bundles/slots/` (gitignored), one per suite and model, with its `run.log`: `defaults-1012/` for Weft, Warp, Shuttle and the Spindle runs before #318 (plus `diag-*` for the `--raw-artifacts` re-runs), `defaults-1012b/` for Thread and the fixed Shuttle case, and `spindle/` on the #318 branch for the Spindle runs after it.
