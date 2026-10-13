@@ -262,6 +262,11 @@ class ModelsCheck {
       ...(ctx.flags.modelsKey === undefined
         ? {}
         : { publicKeys: [ctx.flags.modelsKey] }),
+      ...(ctx.modelRecommendations?.builtinModelsIssued === undefined
+        ? {}
+        : {
+            builtinModelsIssued: ctx.modelRecommendations.builtinModelsIssued,
+          }),
       ...(ctx.now === undefined ? {} : { now: ctx.now }),
     });
   }

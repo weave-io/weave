@@ -115,6 +115,8 @@ export async function setupOpenCode2(
 
   const catalogBuilder = dependencies.buildCatalog ?? buildOpenCode2Catalog;
   const recommendationKeys = dependencies.modelRecommendations?.publicKeys;
+  const builtinModelsIssued =
+    dependencies.modelRecommendations?.builtinModelsIssued;
   const build = () =>
     fromOpenCode2Promise(
       () =>
@@ -135,6 +137,7 @@ export async function setupOpenCode2(
         ...(recommendationKeys === undefined
           ? {}
           : { modelRecommendationKeys: recommendationKeys }),
+        ...(builtinModelsIssued === undefined ? {} : { builtinModelsIssued }),
       }),
     );
   // A catalog is stale when its sources changed or when the agents the host

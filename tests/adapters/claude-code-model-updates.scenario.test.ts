@@ -22,6 +22,7 @@ import { BufferTerminal } from "../../packages/cli/src/io/terminal.js";
 import {
   generateSigningKeys,
   MemoryRecommendationsCache,
+  PINNED_BUILTIN_MODELS_ISSUED,
   ScriptedFetch,
   type SigningKeys,
   signedEnvelope,
@@ -100,6 +101,7 @@ class Machine {
         files: this.cache,
         shell: this.cache,
         publicKeys: [keys.publicKey],
+        builtinModelsIssued: PINNED_BUILTIN_MODELS_ISSUED,
         baseUrl: "https://models.test/models",
       },
     });

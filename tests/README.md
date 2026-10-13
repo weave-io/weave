@@ -62,6 +62,13 @@ Rules that keep this bucket honest:
 - **One config per scenario, reused across its assertions.** The config is the
   scenario; splitting it across `it` blocks hides what is being tested.
 
+- **Recommendation scenarios pin the builtin baseline.** A published model list
+  issued before `BUILTIN_MODELS_ISSUED` is rejected, so a scenario that serves
+  one passes `builtinModelsIssued: PINNED_BUILTIN_MODELS_ISSUED` (from
+  [`support/model-recommendations.ts`](support/model-recommendations.ts)) through
+  the same `modelRecommendations` seam that injects its keys and `fetch`. Moving
+  the real baseline then does not invalidate fixtures.
+
 Shared `Given/When/Then` helpers live in [`support/scenario.ts`](support/scenario.ts).
 
 ## Running them

@@ -31,6 +31,11 @@ async function generateKeys(): Promise<TestKeys> {
 }
 
 const NOW = new Date("2026-10-02T12:00:00Z");
+/**
+ * The builtin models baseline these fixtures were written against. Pinned so
+ * that moving `BUILTIN_MODELS_ISSUED` with a builtins change leaves them valid.
+ */
+const BUILTINS_ISSUED = "2026-09-29T09:11:44Z";
 
 function list(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify(
@@ -58,7 +63,11 @@ beforeAll(async () => {
 });
 
 function verifier(publicKeys = [keys.publicKey]): ModelRecommendationsVerifier {
-  return new ModelRecommendationsVerifier({ publicKeys, now: () => NOW });
+  return new ModelRecommendationsVerifier({
+    publicKeys,
+    now: () => NOW,
+    builtinModelsIssued: BUILTINS_ISSUED,
+  });
 }
 
 async function signed(payload: string, privateKey = keys.privateKey) {
@@ -185,6 +194,7 @@ describe("freshness", () => {
     const v = new ModelRecommendationsVerifier({
       publicKeys: [keys.publicKey],
       now: () => now,
+      builtinModelsIssued: BUILTINS_ISSUED,
     });
     return v.verifyEnvelope(await signed(list(overrides)), context);
   }
@@ -220,16 +230,40 @@ describe("freshness", () => {
     )._unsafeUnwrapErr();
     expect(error).toMatchObject({
       type: "OlderThanBuiltins",
-      builtinsIssued: BUILTIN_MODELS_ISSUED,
+      builtinsIssued: BUILTINS_ISSUED,
     });
   });
 
   it("accepts a list issued exactly when the builtins were set", async () => {
     const result = await verify({
-      issued: BUILTIN_MODELS_ISSUED,
+      issued: BUILTINS_ISSUED,
       expires: "2026-12-01T00:00:00Z",
     });
     expect(result.isOk()).toBe(true);
+  });
+
+  it("measures against BUILTIN_MODELS_ISSUED unless told otherwise", async () => {
+    const builtins = Date.parse(BUILTIN_MODELS_ISSUED);
+    const v = new ModelRecommendationsVerifier({
+      publicKeys: [keys.publicKey],
+      now: () => new Date(builtins),
+    });
+    const iso = (ms: number) =>
+      new Date(ms).toISOString().replace(".000Z", "Z");
+    const expires = iso(builtins + 30 * 24 * 60 * 60 * 1000);
+    const before = await v.verifyEnvelope(
+      await signed(list({ issued: iso(builtins - 1000), expires })),
+      {},
+    );
+    expect(before._unsafeUnwrapErr()).toMatchObject({
+      type: "OlderThanBuiltins",
+      builtinsIssued: BUILTIN_MODELS_ISSUED,
+    });
+    const at = await v.verifyEnvelope(
+      await signed(list({ issued: BUILTIN_MODELS_ISSUED, expires })),
+      {},
+    );
+    expect(at.isOk()).toBe(true);
   });
 
   it("rejects a list that is not newer than the applied one (rollback and replay)", async () => {

@@ -115,6 +115,12 @@ export interface LoadConfigOptions {
    * production keys; tests and local proofs pass their own.
    */
   readonly publicKeys?: readonly string[];
+  /**
+   * The builtin models baseline a list must not predate. Defaults to
+   * `BUILTIN_MODELS_ISSUED`; tests pin their own so a builtins change does
+   * not move their fixtures.
+   */
+  readonly builtinModelsIssued?: string;
 }
 
 /** The merged config and what the loader found along the way. */
@@ -211,6 +217,7 @@ export function loadConfigDetailed(
       verifier: new ModelRecommendationsVerifier({
         publicKeys: options.publicKeys,
         now: options.now,
+        builtinModelsIssued: options.builtinModelsIssued,
       }),
       clientVersion:
         options.clientVersion ?? MODEL_RECOMMENDATIONS_CLIENT_VERSION,

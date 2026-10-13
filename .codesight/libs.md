@@ -623,6 +623,14 @@
   - function buildUserMessage: (evalCase) => string
   - class TapestryExecutionRunner
   - _...5 more_
+- `packages/cli/src/evals/thread-exploration-runner.ts`
+  - function extractThreadExplorationSignals: (content) => ThreadExplorationSignals
+  - function redactSecrets: (raw) => string
+  - function buildUserMessage: (evalCase) => string
+  - class ThreadExplorationRunner
+  - interface ThreadExplorationSignals
+  - interface ThreadExplorationRunnerOptions
+  - _...2 more_
 - `packages/cli/src/evals/trajectory-case-executor.ts`
   - function hasTrajectoryCases: (items) => boolean
   - class TrajectoryCaseExecutor

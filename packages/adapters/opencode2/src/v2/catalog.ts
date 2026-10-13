@@ -115,6 +115,12 @@ export interface BuildOpenCode2CatalogInput {
    * production keys; tests and local proofs pass a throwaway key.
    */
   readonly modelRecommendationKeys?: readonly string[];
+  /**
+   * The instant the builtin model lists were issued; a recommendations list
+   * issued earlier is rejected. Defaults to `BUILTIN_MODELS_ISSUED`; tests pin
+   * it so their fixtures do not move with the builtins.
+   */
+  readonly builtinModelsIssued?: string;
 }
 
 function materializationIssue(
@@ -216,6 +222,9 @@ function buildCandidate(
     ...(input.modelRecommendationKeys === undefined
       ? {}
       : { publicKeys: input.modelRecommendationKeys }),
+    ...(input.builtinModelsIssued === undefined
+      ? {}
+      : { builtinModelsIssued: input.builtinModelsIssued }),
   })
     .mapErr((errors): OpenCode2Error => {
       // A file that parsed but failed the DSL or its validation is a user

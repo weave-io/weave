@@ -174,7 +174,7 @@ describe("Weave's builtin agents on Claude Code", () => {
     pattern: "opus",
     shuttle: "sonnet",
     thread: "haiku",
-    spindle: "haiku",
+    spindle: "sonnet",
     weft: "opus",
     warp: "opus",
   };

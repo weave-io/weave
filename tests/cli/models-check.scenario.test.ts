@@ -15,6 +15,7 @@ import { run } from "../../packages/cli/src/cli.js";
 import { MemoryFileSystem } from "../../packages/cli/src/fs/file-system.js";
 import { BufferTerminal } from "../../packages/cli/src/io/terminal.js";
 import { signModelRecommendations } from "../../packages/config/src/index.js";
+import { PINNED_BUILTIN_MODELS_ISSUED } from "../support/model-recommendations.js";
 
 const PROJECT_DIR = "/site";
 const NOW = new Date("2026-10-02T12:00:00Z");
@@ -97,6 +98,9 @@ async function runWeave(args: string[], files: Record<string, string>) {
     colorEnabled: false,
     fs,
     now: () => NOW,
+    modelRecommendations: {
+      builtinModelsIssued: PINNED_BUILTIN_MODELS_ISSUED,
+    },
   });
   return {
     exitCode: result._unsafeUnwrap(),

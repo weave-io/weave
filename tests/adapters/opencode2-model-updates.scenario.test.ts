@@ -21,6 +21,7 @@ import {
   modelRecommendationsCachePaths,
   signModelRecommendations,
 } from "../../packages/config/src/index.js";
+import { PINNED_BUILTIN_MODELS_ISSUED } from "../support/model-recommendations.js";
 import {
   type OpenCode2Host,
   withWeaveOnOpenCode2,
@@ -173,6 +174,7 @@ describe("a user opts in to automatic model updates and keeps working", () => {
             modelRecommendations: {
               fetch: (url) => server.fetch(url),
               publicKeys: [keys.publicKey],
+              builtinModelsIssued: PINNED_BUILTIN_MODELS_ISSUED,
               baseUrl: BASE_URL,
               now: () => new Date(Date.now() + clockOffset),
             },
