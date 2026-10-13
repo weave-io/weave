@@ -16,7 +16,10 @@ import {
   type OpenCode2CatalogCandidate,
 } from "./catalog.js";
 import { OpenCode2Commands } from "./commands.js";
-import { OpenCode2CatalogController } from "./config-refresh.js";
+import {
+  OpenCode2BackgroundRefresh,
+  OpenCode2CatalogController,
+} from "./config-refresh.js";
 import { probeCatalogSources } from "./config-source.js";
 import { fromOpenCode2Promise } from "./errors.js";
 import type { OpenCode2Context } from "./host-types.js";
@@ -441,8 +444,21 @@ export async function setupOpenCode2(
     readiness.command = true;
   };
 
+  // Probe the sources between turns too, so an edit reaches the host's agent
+  // list before a client reads it to pick the next session's model (#309).
+  const background = new OpenCode2BackgroundRefresh(
+    options.value.refreshIntervalMs,
+    () => controller.refreshInBackground(),
+    (failure) => log.warn({ code: failure.code }, failure.message),
+  );
+  background.start();
+
   return async () => {
+    // Disposing first makes a refresh in flight stop at its next step; then
+    // wait for it, so no background call reaches the host after cleanup.
+    const stopped = background.stop();
     controller.dispose();
+    await stopped;
     modelUpdates.dispose();
     inventoryAbort.abort();
     await inventoryObservation;

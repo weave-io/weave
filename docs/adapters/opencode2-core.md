@@ -151,7 +151,13 @@ exception: the host's subagent tool creates them with
 - **The TUI** selects a model before every submit: a model the user picked for
   that agent in this TUI session, else the agent's registered model, else
   `--model`, the config `model` or a recent model. Switching agents therefore
-  switches to the agent's Weave model.
+  switches to the agent's Weave model. Two TUI behaviours outrank a `.weave`
+  edit, and Weave cannot tell them from a deliberate choice: a session keeps
+  the model it already has, and `/new` or `/clear` carries the current
+  session's model into the next session as that per-agent pick, which lasts
+  until the TUI exits (`/reload` does not clear it; OpenCode 2.0.22 to 2.0.26).
+  After editing an agent's models, pick the model once with the model picker,
+  or start the TUI again from the home screen.
 - **Clients that select no model** (`opencode2 run` without `-m`, API clients)
   would leave the turn on the host default. Weave's `prompt` hook covers them:
   when the session has no model and its agent is one Weave registered, it
@@ -207,9 +213,18 @@ skill in `.weave` when this behavior is not acceptable.
 
 ## Refresh behavior
 
-The server checks for changes before admitted work, with a bounded minimum
-interval. One in-flight refresh is shared. It reads each source once per
-attempt, hashes those exact bytes, and publishes only a complete valid catalog.
+The server checks for changes in the background, about `refreshIntervalMs`
+after the previous check settles, and again before admitted work once that
+interval has passed. One in-flight refresh is shared. The background check is
+what lets an edit reach the host's agent list between turns: the TUI reads an
+agent's model from that list and commits it to the session *before* it submits
+a prompt, so a check made only at prompt admission landed one turn late and
+left that session on the old model
+([#309](https://github.com/weave-io/weave/issues/309)). A background failure is
+logged once per error code until a check succeeds again. Each check hashes the
+recorded sources and lists the host's agents; a rebuild happens only when
+either changed. Plugin cleanup waits for a background check in flight. A refresh reads each
+source once per attempt, hashes those exact bytes, and publishes only a complete valid catalog.
 Broken edits keep the last valid catalog. The CLI plan contribution shows this
 as a bounded refresh warning while it continues to display the last valid plan
 state. A changed catalog reloads native agent
@@ -290,9 +305,9 @@ successful check, 1 hour after a failure) turns nearly every call into a read
 of `state.json`, and its `lock/` directory keeps several hosts and the CLI
 from writing at once. A failure is logged and changes nothing.
 
-There is no timer. A promoted `applied.json` is a changed source, so the next
-due refresh (on the next admitted work after `refreshIntervalMs`) rebuilds the
-catalog and reloads the agents without a restart. A change therefore lands on
+There is no timer for the fetch. A promoted `applied.json` is a changed
+source, so the next background check rebuilds the catalog and reloads the
+agents without a restart. A change therefore lands on
 a turn after the one whose check fetched it. A live session keeps the model it
 has; new sessions, and later turns whose model Weave selects, use the new
 one ([Which model a turn runs on](#which-model-a-turn-runs-on)).
