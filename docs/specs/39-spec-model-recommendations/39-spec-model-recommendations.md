@@ -140,7 +140,7 @@ Each envelope holds the exact signed bytes and their signature in one file, so a
 
 ### Fetching
 
-- `refresh()` makes at most one attempt per channel per 24 hours after a successful check, and one per hour after a failed one, unless forced by `weave models update`. An attempt is one GET of the envelope with `If-None-Match` set to the stored ETag, and no identifying headers or query parameters.
+- `refresh()` makes at most one attempt per channel per 24 hours after a successful check, and one per hour after a failed one, unless forced by `weave models update`. An attempt is one GET of the envelope with `If-None-Match` set to the stored ETag and a fixed `User-Agent: weave-model-recommendations/1`, and no other identifying headers or query parameters. The `User-Agent` is set explicitly because a runtime's default can name the harness and its version (the OpenCode 2 host's Bun runs with `--user-agent=opencode/<channel>/<version>/cli`, #304); every harness and the CLI send the same value.
 - The request has a 5-second timeout and the 64 KiB body limit. Only `https://tryweave.io` is fetched; tests and local proofs point at another URL with `WEAVE_MODEL_RECOMMENDATIONS_URL`.
 - A downloaded file is written to `latest` only after it parses, validates and verifies.
 - In `auto` mode a newly verified `latest` with a later `issued` is copied to `applied`. In `notify` mode it waits for `weave models apply`.

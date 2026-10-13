@@ -71,6 +71,58 @@ export interface RpcFailure {
   readonly data?: unknown;
 }
 
+/**
+ * The first place `value` is not a JSON value, as a path, or `undefined` when
+ * it is one. The real host accepts only JSON values on the RPC wire — an
+ * `undefined` property, a function or a non-finite number fails the call with
+ * `InvalidRequestError: Expected JSON value at ["output", …]` — even where the
+ * method's schema marks the field optional, so the double checks it too.
+ */
+export function nonJsonPath(
+  value: unknown,
+  path: readonly (string | number)[] = [],
+): readonly (string | number)[] | undefined {
+  if (value === null) return undefined;
+  if (typeof value === "string" || typeof value === "boolean") return undefined;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? undefined : path;
+  }
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) {
+      const found = nonJsonPath(item, [...path, index]);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (typeof value !== "object") return path;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return path;
+  for (const [key, item] of Object.entries(value)) {
+    const found = nonJsonPath(item, [...path, key]);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/** Fails the way the host does when a payload is not a JSON value. */
+function assertJsonValue(value: unknown, root: string): void {
+  const path = nonJsonPath(value, [root]);
+  if (path === undefined) return;
+  throw new Error(`Expected JSON value at ${JSON.stringify(path)}`);
+}
+
+/** The part of a registered RPC contract the double checks outputs against. */
+interface RpcContract {
+  readonly methods: Record<
+    string,
+    {
+      readonly output: {
+        safeParse(value: unknown): { success: boolean; error?: unknown };
+      };
+    }
+  >;
+}
+
 export function isRpcFailure(value: unknown): value is RpcFailure {
   return (
     typeof value === "object" &&
@@ -216,6 +268,7 @@ export class OpenCode2Host {
     string,
     (input: never, context: never) => Promise<unknown>
   > = {};
+  private rpcContract: RpcContract | undefined;
   private replay: (() => void) | undefined;
   /** Agent transforms the plugin registered; a reload runs them again. */
   private readonly agentTransforms: Array<(editor: unknown) => void> = [];
@@ -360,7 +413,7 @@ export class OpenCode2Host {
         `no RPC method "${method}" — plugin registered [${Object.keys(this.rpcHandlers).join(", ")}]`,
       );
     }
-    return handler(
+    const output = await handler(
       {
         sessionID: "session",
         directory: this.root,
@@ -377,6 +430,20 @@ export class OpenCode2Host {
         }),
       } as never,
     );
+    if (isRpcFailure(output)) {
+      assertJsonValue(output.data, "data");
+      return output;
+    }
+    // What the host's RPC layer checks before the caller sees anything: a
+    // JSON value that the method's declared output schema accepts.
+    assertJsonValue(output, "output");
+    const parsed = this.rpcContract?.methods[method]?.output.safeParse(output);
+    if (parsed !== undefined && !parsed.success) {
+      throw new Error(
+        `RPC "${method}" output does not match its schema: ${String(parsed.error)}`,
+      );
+    }
+    return output;
   }
 
   /** The names of the session calls a command made, in order. */
@@ -570,17 +637,19 @@ export class OpenCode2Host {
       },
       rpc: {
         register: async (
-          _schema: unknown,
+          contract: RpcContract,
           handlers: Record<
             string,
             (input: never, context: never) => Promise<unknown>
           >,
         ) => {
+          this.rpcContract = contract;
           this.rpcHandlers = handlers;
           return {
             ...this.registration("rpc"),
             events: {
               emit: async (name: string, payload: Record<string, unknown>) => {
+                assertJsonValue(payload, "data");
                 this.planEvents.push({ name, ...payload });
               },
             },

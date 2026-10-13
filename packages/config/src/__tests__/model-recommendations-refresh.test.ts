@@ -25,6 +25,7 @@ import {
   MODEL_RECOMMENDATIONS_LOCK_STALE_MS,
   MODEL_RECOMMENDATIONS_RETRY_INTERVAL_MS,
   MODEL_RECOMMENDATIONS_URL_ENV,
+  MODEL_RECOMMENDATIONS_USER_AGENT,
   ModelRecommendations,
   type ModelRecommendationsDeps,
   type ModelRecommendationsFetch,
@@ -313,7 +314,18 @@ describe("the refresh request", () => {
     const [call] = fetcher.calls;
     expect(call?.url).toBe(STABLE_URL);
     expect(call?.init.method).toBe("GET");
-    expect(call?.headers).toEqual({});
+    expect(call?.headers).toEqual({
+      "user-agent": "weave-model-recommendations/1",
+    });
+  });
+
+  // A runtime's default User-Agent names the harness and its version (the
+  // OpenCode 2 host sends `opencode/<channel>/<version>/cli`), so the request
+  // sets its own: the same fixed value from every harness, with no versions.
+  it("sends a fixed User-Agent that names no harness, runtime or version", () => {
+    expect(MODEL_RECOMMENDATIONS_USER_AGENT).toBe(
+      "weave-model-recommendations/1",
+    );
   });
 
   it("asks for the settings' channel", async () => {
@@ -356,7 +368,10 @@ describe("the refresh request", () => {
     const { fetcher, models } = harness(serve(await signed(list(2)), '"v2"'));
     await models.refresh({ settings: AUTO });
     await models.refresh({ settings: AUTO, force: true });
-    expect(fetcher.calls[1]?.headers).toEqual({ "if-none-match": '"v2"' });
+    expect(fetcher.calls[1]?.headers).toEqual({
+      "if-none-match": '"v2"',
+      "user-agent": "weave-model-recommendations/1",
+    });
   });
 
   it("uses a 5-second timeout and a 64 KiB cap by default", () => {

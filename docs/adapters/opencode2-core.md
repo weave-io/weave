@@ -334,9 +334,20 @@ panel already uses. On a live `@opencode/cli@2.0.16` host with
 `0.3.0-next.0`, the event reached an external SDK subscriber and the TUI
 showed the toast for about five seconds
 ([live proof record](../artifacts/model-recommendations-live-proof-2026-10-01.md)).
-In that release the `status` RPC fails, rather than returning the
-`model_updates_unavailable` issue, while an unusable `applied.json` is
-skipped (#303); `weave models status` reports the reason meanwhile.
+In that release the `status` RPC failed with `InvalidRequestError: Expected
+JSON value`, rather than returning the `model_updates_unavailable` issue,
+while an unusable `applied.json` was skipped (#303). The health report copied
+`agentName: undefined` for that agentless issue, and the host's RPC layer
+accepts JSON values only, even for a field the schema marks optional. Fixed
+after `0.3.0-next.0`: an issue without an agent leaves the key out.
+
+**RPC payloads are JSON values.** The host rejects any RPC output or event
+payload holding a value JSON cannot carry (`undefined`, a function, `NaN`),
+and fails the whole call. Optional fields are therefore omitted, never set to
+`undefined`. The host double in
+[`tests/support/opencode2.ts`](../../tests/support/opencode2.ts) enforces the
+same rule, and also checks each output against the method's declared schema,
+so this class of bug fails in the scenario tests rather than on a live host.
 
 The adapter does not redirect the shared process logger to a Location-specific
 file. Operators control the shared pino destination and level.
