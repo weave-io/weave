@@ -175,6 +175,7 @@
   - type StartPlanError
   - const WEAVE_START_COMMAND
 - `packages/adapters/opencode2/src/v2/config-refresh.ts`
+  - class OpenCode2BackgroundRefresh
   - class OpenCode2CatalogController
   - interface OpenCode2RefreshStatus
   - interface OpenCode2RefreshDependencies

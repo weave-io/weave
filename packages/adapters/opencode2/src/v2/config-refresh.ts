@@ -40,6 +40,46 @@ export interface OpenCode2RefreshDependencies {
   readonly now?: () => number;
 }
 
+/**
+ * Runs `tick` every `intervalMs` until stopped, starting each wait only once
+ * the previous tick has settled, so slow ticks never pile up. The timer does
+ * not keep the host process alive.
+ *
+ * The OpenCode 2 TUI selects a session's model from the host's agent list
+ * before it submits a prompt, so an edit noticed only at prompt admission
+ * lands one turn late and that session keeps the old model (#309). Probing in
+ * the background keeps the agent list current between turns.
+ */
+export class OpenCode2BackgroundRefresh {
+  private timer?: ReturnType<typeof setTimeout>;
+  private stopped = false;
+
+  constructor(
+    private readonly intervalMs: number,
+    private readonly tick: () => PromiseLike<unknown>,
+  ) {}
+
+  start(): void {
+    this.schedule();
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.timer !== undefined) clearTimeout(this.timer);
+    this.timer = undefined;
+  }
+
+  private schedule(): void {
+    if (this.stopped) return;
+    const timer = setTimeout(() => {
+      const next = () => this.schedule();
+      Promise.resolve(this.tick()).then(next, next);
+    }, this.intervalMs);
+    timer.unref?.();
+    this.timer = timer;
+  }
+}
+
 /** Last-valid, single-flight catalog refresh for one OpenCode Location. */
 export class OpenCode2CatalogController {
   private current?: OpenCode2CatalogCandidate;

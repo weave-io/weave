@@ -1656,6 +1656,45 @@ describe("the host changes its model or skill inventory while a session is open"
   });
 });
 
+describe("a user edits an agent's models while the host is running (#309)", () => {
+  // The OpenCode 2 TUI reads an agent's model from the host's agent list
+  // before it submits a prompt, so the host must hold the new model before
+  // the user's next turn, not after it.
+  const config = (model: string) => `
+    agent loom {
+      models ["${model}"]
+    }
+  `;
+
+  it("gives the host the new model without waiting for a prompt", async () => {
+    const result = await live(
+      {
+        config: config("anthropic/claude-opus-5-5"),
+        host: { ...ANTHROPIC_HOST, options: { refreshIntervalMs: 250 } },
+      },
+      async (host) => {
+        const before = host.agent("loom").model;
+        await Bun.write(
+          join(host.root, ".weave", "config.weave"),
+          dedent(config("anthropic/claude-sonnet-5-5")),
+        );
+        await Bun.sleep(700);
+        // No `promptSession()`: nothing but the background probe runs.
+        return { before, after: host.agent("loom").model };
+      },
+    );
+
+    expect(result.before).toEqual({
+      providerID: "anthropic",
+      id: "claude-opus-5-5",
+    });
+    expect(result.after).toEqual({
+      providerID: "anthropic",
+      id: "claude-sonnet-5-5",
+    });
+  });
+});
+
 describe("the host applies agent transforms lazily, as the real one does", () => {
   it("still ends up holding the agents once it next lists them", async () => {
     const host = await load({

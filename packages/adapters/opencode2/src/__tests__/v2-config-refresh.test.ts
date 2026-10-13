@@ -7,13 +7,18 @@
  * a failed one, but not which of two concurrent builds won, nor that a
  * candidate is rolled back when the host's registry reload fails — the host a
  * scenario drives always reloads successfully, and a scenario cannot race the
- * controller.
+ * controller. Also kept: the background refresh's pacing — a scenario sees an
+ * edit picked up without a prompt, but not that a slow probe never overlaps
+ * the next one, nor that no probe runs once it is stopped.
  */
 
 import { describe, expect, it } from "bun:test";
 import { errAsync, ok, type Result, ResultAsync } from "neverthrow";
 import type { OpenCode2CatalogCandidate } from "../v2/catalog.js";
-import { OpenCode2CatalogController } from "../v2/config-refresh.js";
+import {
+  OpenCode2BackgroundRefresh,
+  OpenCode2CatalogController,
+} from "../v2/config-refresh.js";
 import type { OpenCode2Error } from "../v2/errors.js";
 import { catalog } from "./v2-fixtures.js";
 
@@ -219,5 +224,54 @@ describe("OpenCode2CatalogController", () => {
       [undefined, "a"],
       ["a", "b"],
     ]);
+  });
+});
+
+describe("OpenCode2BackgroundRefresh", () => {
+  it("waits for a slow probe to settle before scheduling the next", async () => {
+    let running = 0;
+    let overlapped = false;
+    let ticks = 0;
+    const background = new OpenCode2BackgroundRefresh(5, async () => {
+      running += 1;
+      if (running > 1) overlapped = true;
+      ticks += 1;
+      await Bun.sleep(30);
+      running -= 1;
+    });
+    background.start();
+    await Bun.sleep(100);
+    background.stop();
+
+    expect(ticks).toBeGreaterThan(1);
+    expect(overlapped).toBe(false);
+  });
+
+  it("keeps probing after a probe fails", async () => {
+    let ticks = 0;
+    const background = new OpenCode2BackgroundRefresh(5, async () => {
+      ticks += 1;
+      throw new Error("probe failed");
+    });
+    background.start();
+    await Bun.sleep(50);
+    background.stop();
+
+    expect(ticks).toBeGreaterThan(1);
+  });
+
+  it("runs no probe once stopped", async () => {
+    let ticks = 0;
+    const background = new OpenCode2BackgroundRefresh(5, async () => {
+      ticks += 1;
+    });
+    background.start();
+    await Bun.sleep(30);
+    background.stop();
+    const stoppedAt = ticks;
+    await Bun.sleep(30);
+
+    expect(stoppedAt).toBeGreaterThan(0);
+    expect(ticks).toBe(stoppedAt);
   });
 });
