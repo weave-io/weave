@@ -227,51 +227,73 @@ describe("OpenCode2CatalogController", () => {
   });
 });
 
+/** A promise a test settles itself, to order steps without wall-clock waits. */
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
 describe("OpenCode2BackgroundRefresh", () => {
   it("waits for a slow probe to settle before scheduling the next", async () => {
-    let running = 0;
-    let overlapped = false;
+    const firstStarted = deferred();
+    const finishFirst = deferred();
+    const secondStarted = deferred();
     let ticks = 0;
-    const background = new OpenCode2BackgroundRefresh(5, async () => {
-      running += 1;
-      if (running > 1) overlapped = true;
+    const background = new OpenCode2BackgroundRefresh(1, async () => {
       ticks += 1;
-      await Bun.sleep(30);
-      running -= 1;
+      if (ticks === 1) {
+        firstStarted.resolve();
+        await finishFirst.promise;
+        return;
+      }
+      secondStarted.resolve();
     });
     background.start();
-    await Bun.sleep(100);
+    await firstStarted.promise;
+    // Many intervals pass while the first probe is still running.
+    await Bun.sleep(20);
+    const whileRunning = ticks;
+    finishFirst.resolve();
+    await secondStarted.promise;
     background.stop();
 
-    expect(ticks).toBeGreaterThan(1);
-    expect(overlapped).toBe(false);
+    expect(whileRunning).toBe(1);
+    expect(ticks).toBe(2);
   });
 
-  it("keeps probing after a probe fails", async () => {
+  it("keeps probing after a probe throws or rejects", async () => {
+    const thirdStarted = deferred();
     let ticks = 0;
-    const background = new OpenCode2BackgroundRefresh(5, async () => {
+    const background = new OpenCode2BackgroundRefresh(1, () => {
       ticks += 1;
-      throw new Error("probe failed");
+      if (ticks === 1) throw new Error("probe threw");
+      if (ticks === 2) return Promise.reject(new Error("probe rejected"));
+      thirdStarted.resolve();
+      return Promise.resolve();
     });
     background.start();
-    await Bun.sleep(50);
+    await thirdStarted.promise;
     background.stop();
 
-    expect(ticks).toBeGreaterThan(1);
+    expect(ticks).toBe(3);
   });
 
   it("runs no probe once stopped", async () => {
+    const firstStarted = deferred();
     let ticks = 0;
-    const background = new OpenCode2BackgroundRefresh(5, async () => {
+    const background = new OpenCode2BackgroundRefresh(1, async () => {
       ticks += 1;
+      firstStarted.resolve();
     });
     background.start();
-    await Bun.sleep(30);
+    await firstStarted.promise;
     background.stop();
     const stoppedAt = ticks;
-    await Bun.sleep(30);
+    await Bun.sleep(20);
 
-    expect(stoppedAt).toBeGreaterThan(0);
     expect(ticks).toBe(stoppedAt);
   });
 });

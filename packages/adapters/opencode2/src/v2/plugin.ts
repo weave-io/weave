@@ -21,7 +21,7 @@ import {
   OpenCode2CatalogController,
 } from "./config-refresh.js";
 import { probeCatalogSources } from "./config-source.js";
-import { fromOpenCode2Promise } from "./errors.js";
+import { fromOpenCode2Promise, type OpenCode2Error } from "./errors.js";
 import type { OpenCode2Context } from "./host-types.js";
 import {
   type OpenCode2ModelChangeNotice,
@@ -446,20 +446,32 @@ export async function setupOpenCode2(
 
   // Probe the sources between turns too, so an edit reaches the host's agent
   // list before a client reads it to pick the next session's model (#309).
-  // A failure that repeats is logged once, not on every probe.
+  // Once a catalog is published, a failed refresh keeps it and reports the
+  // failure only through `status()`, so that is what decides here. A failure
+  // that repeats is logged once, not on every probe.
   let lastBackgroundError: string | undefined;
+  const reportBackground = (failure: OpenCode2Error | undefined) => {
+    if (failure === undefined) {
+      lastBackgroundError = undefined;
+      return;
+    }
+    if (failure.code === "disposed") return;
+    if (failure.code === lastBackgroundError) return;
+    lastBackgroundError = failure.code;
+    log.warn({ code: failure.code }, failure.message);
+  };
   const background = new OpenCode2BackgroundRefresh(
     options.value.refreshIntervalMs,
     () =>
       controller.refreshIfDue().then((refreshed) => {
-        if (refreshed.isOk()) {
-          lastBackgroundError = undefined;
-          return;
-        }
-        if (refreshed.error.code === "disposed") return;
-        if (refreshed.error.code === lastBackgroundError) return;
-        lastBackgroundError = refreshed.error.code;
-        log.warn({ code: refreshed.error.code }, refreshed.error.message);
+        if (refreshed.isErr()) return reportBackground(refreshed.error);
+        const status = controller.status();
+        if (status.state !== "failed") return reportBackground(undefined);
+        reportBackground({
+          code: status.lastErrorCode ?? "config_unavailable",
+          message:
+            "Weave sources could not be refreshed; the last valid catalog stays in use",
+        });
       }),
   );
   background.start();

@@ -73,7 +73,8 @@ export class OpenCode2BackgroundRefresh {
     if (this.stopped) return;
     const timer = setTimeout(() => {
       const next = () => this.schedule();
-      Promise.resolve(this.tick()).then(next, next);
+      // The executor catches a synchronous throw too, so it reschedules.
+      new Promise((resolve) => resolve(this.tick())).then(next, next);
     }, this.intervalMs);
     timer.unref?.();
     this.timer = timer;

@@ -1678,8 +1678,15 @@ describe("a user edits an agent's models while the host is running (#309)", () =
           join(host.root, ".weave", "config.weave"),
           dedent(config("anthropic/claude-sonnet-5-5")),
         );
-        await Bun.sleep(700);
-        // No `promptSession()`: nothing but the background probe runs.
+        // No `promptSession()`: nothing but the background probe runs. Wait
+        // for it, up to a bound well past a few refresh intervals.
+        const deadline = Date.now() + 5_000;
+        while (
+          host.agent("loom").model?.id !== "claude-sonnet-5-5" &&
+          Date.now() < deadline
+        ) {
+          await Bun.sleep(20);
+        }
         return { before, after: host.agent("loom").model };
       },
     );
