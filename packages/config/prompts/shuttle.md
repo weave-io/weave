@@ -62,6 +62,7 @@ When done, report back with:
 - Execute the assigned task completely and precisely.
 - Use all available tools as needed.
 - Verify your work before reporting completion.
+- Run each verification command (tests, build, lint) as its own shell command. A command chained with `;`, `&&` or `|` reports only the last exit status, so the status and output you read belong to every part only when you run the parts apart.
 - Be thorough: partial work is worse than a clear failure report.
 </Execution>
 

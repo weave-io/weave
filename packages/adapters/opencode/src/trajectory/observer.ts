@@ -24,7 +24,7 @@ export const OBSERVER_PLUGIN_PATH =
 /** Artifacts-relative file the observer appends to. */
 export const OBSERVER_RECORDS_FILE = "tool-calls.jsonl";
 
-/** Upper bound on command text carried in `detail.command`. */
+/** Upper bound on command text carried in `detail.command` (start and end are kept). */
 export const OBSERVER_COMMAND_MAX_CHARS = 500;
 
 /**
@@ -139,11 +139,21 @@ export function parseObserverRecords(jsonl: string): ParsedObserverRecords {
   return { records, malformedLines };
 }
 
+/** Marks where `boundCommand` cut the middle out of a long command. */
+const COMMAND_ELISION = "\n...\n";
+
+/**
+ * Redacts a command and bounds it to `OBSERVER_COMMAND_MAX_CHARS`. A longer
+ * command keeps its start and its end and drops the middle: a heredoc that
+ * writes a test file is followed by the `bun test` that runs it, and cutting
+ * the end off would hide that run from `expected_commands` (issue #324).
+ */
 function boundCommand(command: string): string {
   const redacted = redactSecrets(command);
-  return redacted.length > OBSERVER_COMMAND_MAX_CHARS
-    ? redacted.slice(0, OBSERVER_COMMAND_MAX_CHARS)
-    : redacted;
+  if (redacted.length <= OBSERVER_COMMAND_MAX_CHARS) return redacted;
+  const room = OBSERVER_COMMAND_MAX_CHARS - COMMAND_ELISION.length;
+  const head = Math.floor(room / 2);
+  return `${redacted.slice(0, head)}${COMMAND_ELISION}${redacted.slice(redacted.length - (room - head))}`;
 }
 
 /** Session id → agent name, from the Channel-A session events. */
