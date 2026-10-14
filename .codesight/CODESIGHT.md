@@ -3,9 +3,9 @@
 > **Stack:** raw-http | none | unknown | typescript
 > **Monorepo:** @weaveio/weave-core, @weaveio/weave-engine, @weaveio/weave-config, @weaveio/weave-cli, @weaveio/weave-docs, @weaveio/weave-adapter-claude-code, @weaveio/weave-adapter-copilot, @weaveio/weave-adapter-opencode, @weaveio/weave-adapter-opencode2, @weaveio/weave-adapter-pi, @weaveio/sandbox-opencode-entrypoint
 
-> 0 routes | 0 models | 0 components | 260 lib files | 30 env vars | 9 middleware | 10 events | 0% test coverage
-> **Token savings:** this file is ~23,300 tokens. Without it, AI exploration would cost ~84,900 tokens. **Saves ~61,600 tokens per conversation.**
-> **Last scanned:** 2026-10-14 21:02 — re-run after significant changes
+> 0 routes | 0 models | 0 components | 261 lib files | 30 env vars | 9 middleware | 10 events | 0% test coverage
+> **Token savings:** this file is ~23,400 tokens. Without it, AI exploration would cost ~85,200 tokens. **Saves ~61,800 tokens per conversation.**
+> **Last scanned:** 2026-10-14 21:21 — re-run after significant changes
 
 ---
 
@@ -945,6 +945,14 @@
   - type SafeGraphValue
   - type SafeGraphCopyError
   - const DEFAULT_SAFE_GRAPH_COPY_BUDGET: SafeGraphCopyBudget
+- `packages/core/src/trajectory-events.ts`
+  - function classifySessionErrors: (events) => void
+  - function recoveredErrorWarnings: (events) => string[]
+  - interface TrajectoryCase
+  - interface TrajectoryCaseVerifier
+  - interface TrajectoryWorkspace
+  - interface TrajectoryRunner
+  - _...28 more_
 - `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
 - `packages/docs/src/utils/base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
 - `packages/engine/src/capability-contract.ts`

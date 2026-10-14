@@ -285,9 +285,10 @@ export function sanitizeCaseResultSummary(
           },
         }
       : {}),
-    // trajectorySummary is allowlisted: only the four closed publishable
+    // trajectorySummary is allowlisted: only the closed publishable
     // fields defined by TrajectorySummarySchema (harnessDelegatedCorrectly,
-    // observedSpawns, observedToolCalls, harnessCompletedWithoutError).
+    // observedSpawns, observedToolCalls, harnessCompletedWithoutError and
+    // the optional warnings).
     // Never the full event stream or a raw artifact reference.
     ...(summary.trajectorySummary !== undefined
       ? {
@@ -298,6 +299,9 @@ export function sanitizeCaseResultSummary(
             observedToolCalls: summary.trajectorySummary.observedToolCalls,
             harnessCompletedWithoutError:
               summary.trajectorySummary.harnessCompletedWithoutError,
+            ...(summary.trajectorySummary.warnings !== undefined
+              ? { warnings: [...summary.trajectorySummary.warnings] }
+              : {}),
           },
         }
       : {}),

@@ -109,3 +109,29 @@ describe("parseTrajectoryEvents", () => {
     expect(result.value.length).toBe(0);
   });
 });
+
+describe("parseTrajectoryEvents — compound shell commands (issue #324)", () => {
+  it("emits one tool-call-before per permission pattern, so one bash call can show as several", () => {
+    // OpenCode asks for permission once per sub-command of a compound bash
+    // call, all at the same instant. These four lines are ONE `bash` call
+    // (`which podman docker; podman --version; docker --version; uname -a`),
+    // not four parallel calls; the observer plugin records one
+    // tool-call-after for it.
+    const ts = "timestamp=2026-09-05T08:31:24.395Z level=INFO run=r";
+    const lines = [
+      "message=created id=ses_a parentID=undefined agent=shuttle model=undefined",
+      'message=evaluated permission=bash pattern="which podman docker"',
+      'message=evaluated permission=bash pattern="podman --version"',
+      'message=evaluated permission=bash pattern="docker --version"',
+      'message=evaluated permission=bash pattern="uname -a"',
+    ]
+      .map((line) => `${ts} ${line}`)
+      .join("\n");
+    const result = parseTrajectoryEvents(lines);
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    const befores = result.value.filter((e) => e.kind === "tool-call-before");
+    expect(befores).toHaveLength(4);
+    expect(new Set(befores.map((e) => e.timestamp)).size).toBe(1);
+  });
+});

@@ -934,6 +934,14 @@
   - type SafeGraphValue
   - type SafeGraphCopyError
   - const DEFAULT_SAFE_GRAPH_COPY_BUDGET: SafeGraphCopyBudget
+- `packages/core/src/trajectory-events.ts`
+  - function classifySessionErrors: (events) => void
+  - function recoveredErrorWarnings: (events) => string[]
+  - interface TrajectoryCase
+  - interface TrajectoryCaseVerifier
+  - interface TrajectoryWorkspace
+  - interface TrajectoryRunner
+  - _...28 more_
 - `packages/core/src/validate.ts` — function validate: (ast) => Result<WeaveConfig, ValidationError[]>
 - `packages/docs/src/utils/base-url.ts` — function normalizeBaseUrl: (base) => string, function withBaseUrl: (base, path) => string
 - `packages/engine/src/capability-contract.ts`
