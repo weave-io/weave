@@ -52,6 +52,7 @@ import {
 import type {
   BundleScoreFile,
   CaseResult,
+  ErroredSuite,
   PromptProvenanceManifest,
   PromptProvider,
   ProvenanceError,
@@ -495,6 +496,8 @@ export interface SuiteRunObservation {
   error: CliError | null;
   /** Suites that could not run at all. */
   partialFailures: RunnerError[];
+  /** Suites with cases that produced no score: warnings, not failures. */
+  erroredSuites: ErroredSuite[];
   /** Per-suite totals, as the run summary reports them. */
   rollups: Array<{
     suite: string;
@@ -874,7 +877,12 @@ export async function runEvalSuite(
   const summary = runResult.isOk() ? runResult.value : null;
   const error = runResult.isErr() ? runResult.error : null;
   const terminal = new BufferTerminal();
-  const exitCode = await buildEvalRunnerExitCode(runResult, request, terminal);
+  const exitCode = await buildEvalRunnerExitCode(
+    runResult,
+    request,
+    terminal,
+    baseEnv,
+  );
 
   const absolute = await filesUnder(bundleRoot);
   const files = absolute.map((path) => relative(bundleRoot, path));
@@ -934,6 +942,7 @@ export async function runEvalSuite(
     exitCode,
     error,
     partialFailures: summary?.partialFailures ?? [],
+    erroredSuites: summary?.erroredSuites ?? [],
     rollups: summary?.agentRollups ?? [],
     files,
     scoreFile,
@@ -967,6 +976,7 @@ async function buildEvalRunnerExitCode(
   runResult: Awaited<ReturnType<EvalOrchestrator["run"]>>,
   request: EvalRunRequest,
   terminal: BufferTerminal,
+  env: Record<string, string | undefined>,
 ): Promise<number> {
   const orchestrator = {
     run: () => new ResultAsync(Promise.resolve(runResult)),
@@ -975,7 +985,7 @@ async function buildEvalRunnerExitCode(
   const result = await buildEvalRunner(
     orchestrator,
     () => {},
-    printRunReport(terminal, plain),
+    printRunReport(terminal, plain, env),
   )(request);
   return result.isOk() ? result.value : 1;
 }
