@@ -200,15 +200,16 @@ interface TrajectorySummary {
   observedSpawns: string[];
   observedToolCalls: number;
   harnessCompletedWithoutError: boolean;
+  warnings?: string[]; // issue #324: one fixed-form line per recovered error
 }
 ```
 
 - `harnessDelegatedCorrectly`: computed by comparing `observedSpawns` (derived from `subagent-spawned` events) against `expected_outcome.expected_spawns`. `true` only when every expected spawn was observed, in any order unless a future spec adds ordering assertions.
 - `observedSpawns`: an ordered array of child agent names, derived directly from `subagent-spawned` events. Agent names only, never arguments or session content.
 - `observedToolCalls`: a count only, derived from `tool-call-after` events. No tool names, no tool arguments, no file contents.
-- `harnessCompletedWithoutError`: `true` when a `session-completed` event was observed and no `session-errored` event was observed for the same `sessionId`.
+- `harnessCompletedWithoutError`: `true` when a `session-completed` event was observed and every `session-errored` event was recovered from, meaning a later `session-completed` for the same `sessionId` followed it (issue #324). Recovered errors are listed in the optional `warnings` array (one line each, without the raw `errorKind`); an unrecovered error makes this `false`.
 
-These four fields are the entire publishable surface of a trajectory case. No other trajectory-derived field may appear in a publishable `CaseResultSummary` or `PublicCaseEntry` (Spec 31) without a new ADR extending this set, because the set is intentionally bounded to what ADR 0008 approved.
+These four fields, plus the optional `warnings` array of fixed-form lines (agent name only), are the entire publishable surface of a trajectory case. No other trajectory-derived field may appear in a publishable `CaseResultSummary` or `PublicCaseEntry` (Spec 31) without a new ADR extending this set, because the set is intentionally bounded to what ADR 0008 approved.
 
 ### Sanitization envelope
 

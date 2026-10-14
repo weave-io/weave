@@ -317,6 +317,49 @@ describe("OpenCodeTrajectoryRunner", () => {
     expect(result.value.summary.harnessDelegatedCorrectly).toBe(false);
   });
 
+  it("reports a recovered stream error as a warning, not a failure (issue #324)", async () => {
+    const recovered = `${CANNED_STDERR.trimEnd()}
+timestamp=2026-09-03T17:21:38.900Z level=ERROR run=abc message="stream error" session.id=ses_child
+timestamp=2026-09-03T17:21:39.900Z level=INFO run=abc message="exiting loop" session.id=ses_child
+`;
+    const podman = new MockPodmanClient({
+      kind: "resolve",
+      result: { exitCode: 0, stderr: recovered },
+    });
+    const result = await buildRunner(podman).run(
+      buildTestCase(),
+      "openai/gpt-4o-mini",
+      WORKSPACE,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.summary.harnessCompletedWithoutError).toBe(true);
+    expect(result.value.summary.warnings).toEqual([
+      "shuttle session logged an error and recovered (a later session-completed followed)",
+    ]);
+  });
+
+  it("still reports an error the session never completed after", async () => {
+    const unrecovered = `${CANNED_STDERR.split("\n").slice(0, 4).join("\n")}
+timestamp=2026-09-03T17:21:38.900Z level=ERROR run=abc message="boom" session.id=ses_child
+`;
+    const podman = new MockPodmanClient({
+      kind: "resolve",
+      result: { exitCode: 0, stderr: unrecovered },
+    });
+    const result = await buildRunner(podman).run(
+      buildTestCase(),
+      "openai/gpt-4o-mini",
+      WORKSPACE,
+    );
+
+    expect(result.isOk()).toBe(true);
+    if (!result.isOk()) return;
+    expect(result.value.summary.harnessCompletedWithoutError).toBe(false);
+    expect(result.value.summary.warnings).toBeUndefined();
+  });
+
   it("returns HarnessCrashed when the sandbox exits non-zero", async () => {
     const podman = new MockPodmanClient({
       kind: "resolve",

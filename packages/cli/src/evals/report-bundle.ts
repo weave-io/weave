@@ -153,6 +153,9 @@ export function assembleCaseEntry(
             observedToolCalls: row.trajectorySummary.observedToolCalls,
             harnessCompletedWithoutError:
               row.trajectorySummary.harnessCompletedWithoutError,
+            ...(row.trajectorySummary.warnings !== undefined
+              ? { warnings: [...row.trajectorySummary.warnings] }
+              : {}),
           },
         }
       : {}),

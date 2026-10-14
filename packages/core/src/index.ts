@@ -154,8 +154,10 @@ export type {
   TrajectoryWorkspace,
 } from "./trajectory-events.js";
 export {
+  classifySessionErrors,
   MessageEmittedEventSchema,
   RawArtifactRefSchema,
+  recoveredErrorWarnings,
   SessionCompletedEventSchema,
   SessionCreatedEventSchema,
   SessionErroredEventSchema,

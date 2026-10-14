@@ -162,6 +162,21 @@ describe("joinObserverRecords", () => {
       bounded?.kind === "tool-call-after" ? bounded.detail : undefined;
     expect(detail?.command?.length).toBe(OBSERVER_COMMAND_MAX_CHARS);
   });
+
+  it("keeps the end of a long command, where a heredoc's follow-up lives (issue #324)", () => {
+    // Sonnet appends a test with a long heredoc, then runs `bun test` on the
+    // next line. Cutting the end off hid the run from `expected_commands`.
+    const heredoc = `cat >> test/a.test.ts <<'EOF'\n${"z".repeat(1500)}\nEOF\nbun test`;
+    const [bounded] = joinObserverRecords(
+      [],
+      [record({ command: heredoc })],
+    ).filter((event) => event.kind === "tool-call-after");
+    const command =
+      bounded?.kind === "tool-call-after" ? bounded.detail?.command : undefined;
+    expect(command?.length).toBeLessThanOrEqual(OBSERVER_COMMAND_MAX_CHARS);
+    expect(command?.startsWith("cat >> test/a.test.ts")).toBe(true);
+    expect(command?.endsWith("EOF\nbun test")).toBe(true);
+  });
 });
 
 describe("OBSERVER_PLUGIN_SOURCE", () => {

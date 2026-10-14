@@ -45,15 +45,17 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getBuiltinConfig } from "@weaveio/weave-config";
-import type {
-  TrajectoryCase,
-  TrajectoryEvent,
-  TrajectoryResult,
-  TrajectoryRunner,
-  TrajectoryRunnerError,
-  TrajectorySummary,
-  TrajectoryVerifierResult,
-  TrajectoryWorkspace,
+import {
+  classifySessionErrors,
+  recoveredErrorWarnings,
+  type TrajectoryCase,
+  type TrajectoryEvent,
+  type TrajectoryResult,
+  type TrajectoryRunner,
+  type TrajectoryRunnerError,
+  type TrajectorySummary,
+  type TrajectoryVerifierResult,
+  type TrajectoryWorkspace,
 } from "@weaveio/weave-core";
 import { logger, redactSecrets } from "@weaveio/weave-engine";
 import {
@@ -1002,14 +1004,19 @@ export class OpenCodeTrajectoryRunner implements TrajectoryRunner {
     const hasCompleted = events.some(
       (event) => event.kind === "session-completed",
     );
-    const hasErrored = events.some((event) => event.kind === "session-errored");
-    const harnessCompletedWithoutError = hasCompleted && !hasErrored;
+    // An error the session recovered from (a later session-completed for the
+    // same session) is a warning, not a failure (issue #324).
+    const hasUnrecoveredError =
+      classifySessionErrors(events).unrecovered.length > 0;
+    const harnessCompletedWithoutError = hasCompleted && !hasUnrecoveredError;
+    const warnings = recoveredErrorWarnings(events);
 
     return {
       harnessDelegatedCorrectly,
       observedSpawns,
       observedToolCalls,
       harnessCompletedWithoutError,
+      ...(warnings.length > 0 ? { warnings } : {}),
     };
   }
 }

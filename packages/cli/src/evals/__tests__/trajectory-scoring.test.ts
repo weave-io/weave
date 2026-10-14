@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
 import type { TrajectoryEvent } from "@weaveio/weave-core";
 import {
   type HarnessTrajectoryOutcome,
@@ -355,6 +356,72 @@ describe("scoreTrajectoryResult — verification checks", () => {
     expect(codeAfterCheck.dimensions.executionCompleteness.score).toBe(0);
   });
 
+  describe("compound commands (issue #324)", () => {
+    function score(events: TrajectoryEvent[]) {
+      return scoreTrajectoryResult(
+        buildInput({
+          events: [...happyPathEvents(), edit(10), ...events],
+          expectedOutcome: RUN_TESTS_AFTER_EDIT,
+        }),
+      );
+    }
+
+    it("does not credit a compound command's exit code to the check", () => {
+      // Exit 0 comes from the trailing `which tsc`; bun test's own result is lost.
+      const record = score([
+        shell(20, "cd /workspace && bun test 2>&1; which tsc", 0),
+      ]);
+      expect(record.dimensions.executionCompleteness.score).toBe(0);
+      expect(record.passed).toBe(false);
+    });
+
+    it("does not credit a piped command (the exit code is the pipe's last stage)", () => {
+      const record = score([shell(20, "bun test 2>&1 | tail -5", 0)]);
+      expect(record.dimensions.executionCompleteness.score).toBe(0);
+    });
+
+    it("keeps looking: a later plain run satisfies the check", () => {
+      const record = score([
+        shell(20, "cd /workspace && bun test 2>&1; which tsc", 1),
+        shell(30, "bun test", 0),
+      ]);
+      expect(record.dimensions.executionCompleteness.score).toBe(1);
+    });
+
+    it("accepts the check as the last command of an && chain", () => {
+      const record = score([shell(20, "cd /workspace && bun test 2>&1", 0)]);
+      expect(record.dimensions.executionCompleteness.score).toBe(1);
+    });
+
+    it("accepts exit 0 when only && commands follow the check", () => {
+      const record = score([shell(20, "bun test && echo done", 0)]);
+      expect(record.dimensions.executionCompleteness.score).toBe(1);
+    });
+
+    it("still matches a compound command when success is not required", () => {
+      const record = scoreTrajectoryResult(
+        buildInput({
+          events: [
+            ...happyPathEvents(),
+            edit(10),
+            shell(20, "bun test; which tsc", 1),
+          ],
+          expectedOutcome: makeExpectedOutcome({
+            expected_tools: [],
+            expected_commands: [
+              {
+                contains: "bun test",
+                after_last_edit: true,
+                expect_success: false,
+              },
+            ],
+          }),
+        }),
+      );
+      expect(record.dimensions.executionCompleteness.score).toBe(1);
+    });
+  });
+
   it("treats after_last_edit as satisfied when nothing was edited", () => {
     const record = scoreTrajectoryResult(
       buildInput({
@@ -652,5 +719,73 @@ describe("scoreTrajectoryResult — verification checks", () => {
     // (any passing primary dimension) keeps passing it.
     expect(record.dimensions.executionCompleteness.score).toBe(0);
     expect(record.passed).toBe(true);
+  });
+});
+
+describe("scoreTrajectoryResult — recovered session errors (issue #324)", () => {
+  const recordedEvents = JSON.parse(
+    readFileSync(
+      new URL(
+        "./fixtures/sonnet-recovered-stream-error.events.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as TrajectoryEvent[];
+
+  const expectedOutcome = makeExpectedOutcome({
+    expected_tools: ["edit"],
+    expected_commands: [
+      { contains: "bun test", after_last_edit: true, expect_success: true },
+    ],
+  });
+
+  it("passes delegation for a stream error the session recovered from, and says so", () => {
+    const record = scoreTrajectoryResult(
+      buildInput({ events: recordedEvents, expectedOutcome }),
+    );
+    expect(record.dimensions.routingCorrectness.score).toBe(1);
+    expect(record.dimensions.delegationCorrectness.score).toBe(1);
+    expect(record.dimensions.delegationCorrectness.rationale).toContain(
+      "recovered",
+    );
+  });
+
+  it("reports the recorded compound `bun test; ...` run as unverified, not as a pass", () => {
+    const record = scoreTrajectoryResult(
+      buildInput({ events: recordedEvents, expectedOutcome }),
+    );
+    expect(record.dimensions.executionCompleteness.score).toBeCloseTo(0.5);
+    expect(record.dimensions.executionCompleteness.rationale).toContain(
+      "bun test",
+    );
+  });
+
+  it("still fails delegation when the errored session never completes", () => {
+    const events = recordedEvents.filter(
+      (e) => !(e.kind === "session-completed" && e.agentName === "unknown"),
+    );
+    const record = scoreTrajectoryResult(
+      buildInput({ events, expectedOutcome }),
+    );
+    expect(record.dimensions.delegationCorrectness.score).toBe(0);
+    expect(record.dimensions.delegationCorrectness.rationale).toContain(
+      "session-errored",
+    );
+  });
+
+  it("still fails delegation for an error after the last completion", () => {
+    const events: TrajectoryEvent[] = [
+      ...happyPathEvents(),
+      {
+        sessionId: "session-1",
+        timestamp: "2026-01-01T00:00:09.000Z",
+        kind: "session-errored",
+        agentName: "loom",
+        errorKind: "boom",
+      },
+    ];
+    const record = scoreTrajectoryResult(buildInput({ events }));
+    expect(record.dimensions.delegationCorrectness.score).toBe(0);
   });
 });

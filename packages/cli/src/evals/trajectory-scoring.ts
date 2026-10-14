@@ -34,9 +34,11 @@
  * function over its inputs.
  */
 
-import type {
-  TrajectoryEvent,
-  TrajectoryVerifierResult,
+import {
+  classifySessionErrors,
+  recoveredErrorWarnings,
+  type TrajectoryEvent,
+  type TrajectoryVerifierResult,
 } from "@weaveio/weave-core";
 import type {
   DimensionScore,
@@ -114,8 +116,13 @@ function hasSessionCompleted(events: TrajectoryEvent[]): boolean {
   return events.some((event) => event.kind === "session-completed");
 }
 
-function hasSessionErrored(events: TrajectoryEvent[]): boolean {
-  return events.some((event) => event.kind === "session-errored");
+/**
+ * True when a `session-errored` event was not followed by a
+ * `session-completed` for the same session. A recovered error does not
+ * count (issue #324); see `classifySessionErrors`.
+ */
+function hasUnrecoveredSessionError(events: TrajectoryEvent[]): boolean {
+  return classifySessionErrors(events).unrecovered.length > 0;
 }
 
 function arraysEqualInOrder(a: string[], b: string[]): boolean {
@@ -159,22 +166,26 @@ function buildDelegationCorrectnessDimension(
   expected: HarnessTrajectoryOutcome,
 ): DimensionScore {
   const completed = hasSessionCompleted(events);
-  const errored = hasSessionErrored(events);
+  const errored = hasUnrecoveredSessionError(events);
+  const warnings = recoveredErrorWarnings(events);
   const observed = observedSpawns(events);
   const lineageMatched = arraysEqualInOrder(observed, expected.expected_spawns);
 
   if (completed && !errored && lineageMatched) {
+    const recovered =
+      warnings.length > 0 ? ` Warning: ${warnings.join("; ")}.` : "";
     return {
       score: 1,
-      rationale:
-        "Harness reached session-completed without error and produced the expected delegate lineage.",
+      rationale: `Harness reached session-completed without an unrecovered error and produced the expected delegate lineage.${recovered}`,
       applicable: true,
     };
   }
 
   const reasons: string[] = [];
   if (!completed) reasons.push("no session-completed event observed");
-  if (errored) reasons.push("a session-errored event was observed");
+  if (errored) {
+    reasons.push("a session-errored event was observed and not recovered from");
+  }
   if (!lineageMatched) {
     reasons.push(
       `delegate lineage [${observed.join(", ") || "(none)"}] did not match expected [${expected.expected_spawns.join(", ")}]`,
@@ -335,9 +346,39 @@ function describeDelegation(
 }
 
 /**
+ * Shell operators that join the parts of a compound command. `&&` is listed
+ * before `|` so `||` and `&&` are not split into two pipes.
+ */
+const COMPOUND_SEPARATOR = /(&&|\|\||;|\||\n)/;
+
+/**
+ * True when a command's exit code can be credited to the part of it that
+ * contains `needle` (issue #324). A shell reports the exit code of the last
+ * command that ran, so in `cd /workspace && bun test 2>&1; which tsc` the
+ * code is `which tsc`'s and says nothing about `bun test`. The code is
+ * attributable when the matching part is the last one, or when every
+ * operator after it is `&&`: then exit 0 means each part before it
+ * succeeded too. `;`, `||`, `|` and newlines after the match are not
+ * attributable. Operators inside quotes split too, which errs on the side
+ * of not crediting.
+ */
+function exitCodeAttributableTo(command: string, needle: string): boolean {
+  const tokens = command.split(COMPOUND_SEPARATOR);
+  // Even indexes are command parts, odd indexes the operators between them.
+  const last = tokens
+    .map((token, index) => index % 2 === 0 && token.includes(needle))
+    .lastIndexOf(true);
+  if (last === -1) return false;
+  return tokens
+    .slice(last + 1)
+    .every((token, index) => index % 2 === 1 || token === "&&");
+}
+
+/**
  * True when one observed shell call satisfies every condition of `command`
  * (Spec 35): its command contains `contains`, it came after the last edit
- * when required (vacuously true with no edits), and it exited 0 when required.
+ * when required (vacuously true with no edits), and it exited 0 when
+ * required, with that exit code attributable to the matched command.
  */
 function isCommandSatisfied(
   events: TrajectoryEvent[],
@@ -351,7 +392,10 @@ function isCommandSatisfied(
       !command.after_last_edit ||
       lastEdit === undefined ||
       Date.parse(event.timestamp) > lastEdit;
-    const succeeded = !command.expect_success || event.detail.exitCode === 0;
+    const succeeded =
+      !command.expect_success ||
+      (event.detail.exitCode === 0 &&
+        exitCodeAttributableTo(event.detail.command, command.contains));
     return afterEdit && succeeded;
   });
 }

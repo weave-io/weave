@@ -110,6 +110,55 @@ export type SessionErroredEvent = z.infer<typeof SessionErroredEventSchema>;
 export type TrajectoryEvent = z.infer<typeof TrajectoryEventSchema>;
 
 // ---------------------------------------------------------------------------
+// Error recovery
+// ---------------------------------------------------------------------------
+
+/** The `session-errored` events of a stream. */
+type SessionErroredEvent_ = z.infer<typeof SessionErroredEventSchema>;
+
+/**
+ * Splits a stream's `session-errored` events into those the session
+ * recovered from and those it did not (issue #324). OpenCode logs an ERROR
+ * line for a transient provider stream error and then retries, so the same
+ * session goes on to `session-completed`. An error is recovered when a
+ * `session-completed` event for the same session comes after it; an error
+ * with none (the session died, or never finished) is unrecovered.
+ */
+export function classifySessionErrors(events: readonly TrajectoryEvent[]): {
+  recovered: SessionErroredEvent_[];
+  unrecovered: SessionErroredEvent_[];
+} {
+  const recovered: SessionErroredEvent_[] = [];
+  const unrecovered: SessionErroredEvent_[] = [];
+  for (const event of events) {
+    if (event.kind !== "session-errored") continue;
+    const start = Date.parse(event.timestamp);
+    const completedAfter = events.some(
+      (other) =>
+        other.kind === "session-completed" &&
+        other.sessionId === event.sessionId &&
+        Date.parse(other.timestamp) >= start,
+    );
+    (completedAfter ? recovered : unrecovered).push(event);
+  }
+  return { recovered, unrecovered };
+}
+
+/**
+ * One warning line per recovered `session-errored` event. The line leaves
+ * out `errorKind` (a raw log message), which Spec 33 keeps out of anything
+ * publishable.
+ */
+export function recoveredErrorWarnings(
+  events: readonly TrajectoryEvent[],
+): string[] {
+  return classifySessionErrors(events).recovered.map(
+    (event) =>
+      `${event.agentName} session logged an error and recovered (a later session-completed followed)`,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // TrajectorySummary — publishable field set (closed; see spec §Publishable
 // Field Set). No other trajectory-derived field may appear here without a
 // new ADR.
@@ -121,6 +170,11 @@ export const TrajectorySummarySchema = z
     observedSpawns: z.array(z.string()),
     observedToolCalls: z.number(),
     harnessCompletedWithoutError: z.boolean(),
+    /**
+     * Non-fatal observations about the run, such as a `session-errored`
+     * event the session recovered from. Omitted when there are none.
+     */
+    warnings: z.array(z.string()).optional(),
   })
   .strict();
 

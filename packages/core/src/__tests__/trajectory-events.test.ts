@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import {
+  classifySessionErrors,
   MessageEmittedEventSchema,
+  recoveredErrorWarnings,
   SessionCompletedEventSchema,
   SessionCreatedEventSchema,
   SessionErroredEventSchema,
@@ -8,6 +10,7 @@ import {
   ToolCallAfterEventSchema,
   ToolCallBeforeEventSchema,
   ToolCallDetailSchema,
+  type TrajectoryEvent,
   TrajectoryEventSchema,
   TrajectoryResultSchema,
   TrajectorySummarySchema,
@@ -273,6 +276,69 @@ describe("Tool-call detail", () => {
         harnessCompletedWithoutError: true,
         detail: { command: "bun test", exitCode: 0 },
       }).success,
+    ).toBe(false);
+  });
+});
+
+describe("classifySessionErrors (issue #324)", () => {
+  const errored = (sessionId: string, timestamp: string): TrajectoryEvent => ({
+    sessionId,
+    timestamp,
+    kind: "session-errored",
+    agentName: "loom",
+    errorKind: "stream error",
+  });
+  const completed = (
+    sessionId: string,
+    timestamp: string,
+  ): TrajectoryEvent => ({
+    sessionId,
+    timestamp,
+    kind: "session-completed",
+    agentName: "loom",
+    durationMs: 1,
+  });
+
+  it("treats an error followed by its session's completion as recovered", () => {
+    const events = [
+      errored("a", "2026-01-01T00:00:01Z"),
+      completed("a", "2026-01-01T00:00:02Z"),
+    ];
+    const { recovered, unrecovered } = classifySessionErrors(events);
+    expect(recovered).toHaveLength(1);
+    expect(unrecovered).toHaveLength(0);
+    expect(recoveredErrorWarnings(events)).toEqual([
+      "loom session logged an error and recovered (a later session-completed followed)",
+    ]);
+  });
+
+  it("treats an error with no later completion of the same session as unrecovered", () => {
+    const events = [
+      completed("a", "2026-01-01T00:00:00Z"),
+      errored("a", "2026-01-01T00:00:01Z"),
+      completed("b", "2026-01-01T00:00:02Z"),
+    ];
+    const { recovered, unrecovered } = classifySessionErrors(events);
+    expect(recovered).toHaveLength(0);
+    expect(unrecovered).toHaveLength(1);
+    expect(recoveredErrorWarnings(events)).toEqual([]);
+  });
+});
+
+describe("TrajectorySummarySchema warnings (issue #324)", () => {
+  const base = {
+    harnessDelegatedCorrectly: true,
+    observedSpawns: [],
+    observedToolCalls: 0,
+    harnessCompletedWithoutError: true,
+  };
+  it("accepts optional warnings and rejects non-string entries", () => {
+    expect(
+      TrajectorySummarySchema.safeParse({ ...base, warnings: ["w"] }).success,
+    ).toBe(true);
+    expect(TrajectorySummarySchema.safeParse(base).success).toBe(true);
+    expect(
+      TrajectorySummarySchema.safeParse({ ...base, warnings: [1] }).success,
     ).toBe(false);
   });
 });
